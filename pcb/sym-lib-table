@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "rc522")(type "Legacy")(uri "C:/Users/Nathan/Downloads/rc522.lib")(options "")(descr ""))
+)
