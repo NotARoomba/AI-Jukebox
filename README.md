@@ -2,7 +2,7 @@
   <br>
   <img src="images/jukebox_logo.png" alt="Jukebox concept" width="200">
   <br>
-  Jukebox 
+  AI Jukebox 
 </h1>
 
 <h4 align="center">A Minecraft‑inspired AI‑powered music jukebox using NFC‑tagged disks!</h4>
