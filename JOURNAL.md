@@ -1,5 +1,5 @@
 ---
-title: "Jukebox"
+title: "AI Jukebox"
 author: "Nathan Alspaugh (NotARoomba)"
 description: "A Minecraft inspired jukebox that plays AI-generated music/albums from discs!"
 created_at: "2025-06-13"
