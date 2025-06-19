@@ -66,6 +66,8 @@
 
 ## Credits
 
+Inspired by [@danieliscrazy's jukebox](https://github.com/danieliscrazy/jukebox)
+
 This project uses:
 
 - [KiCad](https://www.kicad.org/)
