@@ -5,7 +5,11 @@
   AI Jukebox 
 </h1>
 
-<h4 align="center">A Minecraft‑inspired AI‑powered music jukebox using NFC‑tagged disks!</h4>
+<h4 align="center">A Minecraft‑inspired AI‑powered music jukebox using NFC‑tagged disks!
+
+(Heavily) Inspired by [@danieliscrazy's jukebox](https://github.com/danieliscrazy/jukebox)
+
+</h4>
 
 <div align="center">
 
@@ -32,6 +36,7 @@
 - **Audio Output**: Integrated speaker + MAX98357 amplifier, with Bluetooth support.
 - **Raspberry Pi Zero 2 W** powers logic and audio playback.
 - **PCB Wiring** for NFC and amp modules designed in KiCad.
+- **Playback Buttons** to play/pause, fast forward/skip, or rewind/unskip music.
 
 ## 🧩 Components & Costs
 
@@ -41,8 +46,10 @@
 | Speaker Amp Max98357  | 22,140                  | 5.40        | [Online Marketplace](https://articulo.mercadolibre.com.co/MCO-2424374156-max98357-dac-convertidor-digital-analogico-amplificador-3w-_JM#polycard_client=search-nordic&position=12&search_layout=stack&type=item&tracking_id=20f32b76-e12d-44f0-9b37-b97e2951a224&wid=MCO2424374156&sid=search)                                                                                                                                                                                                       |
 | NFC Tags              | 44,105                  | 10.70       | [Online Marketplace](https://www.mercadolibre.com.co/a-100-unidadeslote-para-telefonos-con-chip-ntag215-nfc-pvc/p/MCO2011890227#polycard_client=search-nordic&searchVariation=MCO2011890227&position=6&search_layout=grid&type=product&tracking_id=ad232278-3e0d-49d9-bf02-d20f7d0de3cb&wid=MCO2772795516&sid=search)                                                                                                                                                                                |
 | RFID Kit RC522        | 12,500                  | 3.03        | [Online Marketplace](https://articulo.mercadolibre.com.co/MCO-592398205-kit-rfid-rc522-receptor-tarjeta-y-llavero-_JM#polycard_client=search-nordic&position=11&search_layout=stack&type=item&tracking_id=789bf9be-1bc4-40a3-bf0c-bac5863410f3&wid=MCO592398205&sid=search)                                                                                                                                                                                                                          |
-| Push Push Mechanism   | 19,400 (already bought) | 4.71        | Local Hardware Store                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Push Push Mechanism   | 19,400 (already bought) | 4.71        | Local Hardware Store W                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 1cm Blocks of Wood    | 33,760 (each, 2 units)  | 8.19        | [Temu](https://share.temu.com/08dAAkNGvvA)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| MX-Style Switches     | 0 (already bought)      | 0.00        | Already Purchased                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| DSA Keycaps           | 0 (already bought)      | 0.00        | Already Purchased                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **SubTotal**          | **272,750**             | **66.18**   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **Shipping Costs**    | **105,000**             | **25.00**   | Estimated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **Total**             | **377,750**             | **91.18**   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -52,6 +59,7 @@
 - Designed in Fusion 360 as a 16 cm cube.
 - 3D printed internal supports, wooden outer shell, and speaker cut‑out.
 - Push‑push hardware custom‑fitted into disk slot.
+- Buttons to play/pause, fastforward, and rewind
 
 ![alt text](/images/disk.png)
 
@@ -61,6 +69,7 @@
 
 - Designed wiring in KiCad for Raspberry Pi ↔ RC522 NFC ↔ MAX98357 amp.
 - Followed PiMyLifeUp tutorial for RC522, and Adafruit guide for MAX98357 wiring.
+- MX-Style switches for play/pause and other functionality.
 
 ![alt text](/images/wiring.png)
 
