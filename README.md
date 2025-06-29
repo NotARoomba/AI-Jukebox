@@ -27,18 +27,16 @@
   <a href="#credits">Credits</a>
 </p>
 
-## 🔧 Key Features
+## Key Features
 
-- **NFC‑enabled Disks**: Tap‑to‑play AI‑generated tracks or album content.
-- **Grouped Albums**: Use prompt‑encoding or album playback modes.
-- **Satisfying Push‑Push Mechanics**: Disks elegantly eject on second push.
+- **NFC‑enabled Disks**: Insert‑to‑play AI‑generated tracks or playlists.
+- **Satisfying Push‑Push Mechanics**: Disks can be entered and pushed out with a nice mechanism.
 - **Custom Cube Frame**: 16 cm wooden case with 3D printed internals.
-- **Audio Output**: Integrated speaker + MAX98357 amplifier, with Bluetooth support.
-- **Raspberry Pi Zero 2 W** powers logic and audio playback.
-- **PCB Wiring** for NFC and amp modules designed in KiCad.
-- **Playback Buttons** to play/pause, fast forward/skip, or rewind/unskip music.
+- **Audio Output**: Integrated speaker + MAX98357 amplifier, with Bluetooth support (via Raspberry PI).
+- **Raspberry Pi Zero 2 W**: Powers logic and audio playback.
+- **Playback Buttons**: Play/pause, fast forward/skip, or rewind/unskip music.
 
-## 🧩 Components & Costs
+## Components & Costs
 
 | Item                  | Price (COP)             | Price (USD) | Source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | --------------------- | ----------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -65,13 +63,15 @@
 
 ![alt text](/images/jukeboxdiskinside.png)
 
-## 📝 PCB & Wiring
+## PCB & Wiring
 
 - Designed wiring in KiCad for Raspberry Pi ↔ RC522 NFC ↔ MAX98357 amp.
 - Followed PiMyLifeUp tutorial for RC522, and Adafruit guide for MAX98357 wiring.
 - MX-Style switches for play/pause and other functionality.
 
 ![alt text](/images/wiring.png)
+
+![alt text](/images/fritzing.png)
 
 ## Credits
 
