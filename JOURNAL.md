@@ -3,7 +3,7 @@ title: "AI Jukebox"
 author: "Nathan Alspaugh (NotARoomba)"
 description: "A Minecraft inspired jukebox that plays AI-generated music/albums from discs!"
 created_at: "2025-06-13"
-time_spent: ~21 Hours + ~20 hours future work
+time_spent: ~23 Hours
 ---
 
 # June 13: Brainstorming (~2 Hours)
@@ -47,6 +47,10 @@ I went to the center of my city to try and find ebony but I had to leave because
 After making the box I fired up KiCad to connct the components, following a [tutorial](https://pimylifeup.com/raspberry-pi-rfid-rc522/) to connect the NFC reader to the Raspberry Pi and also a [guide by Adafruit](https://learn.adafruit.com/adafruit-max98357-i2s-class-d-mono-amp/raspberry-pi-wiring) for the amp wiring.
 
 ![alt text](/images/wiring.png)
+
+# June 30: README Fixes and Code
+
+I created some code and scripts that setup the nviroment based on the various guides for the NFC tag and Speaker. The code orks by assigning each disk a text and dpening on the text or the bitmask, it plays the correct minectaft disk or generates a song based on that bitmask.
 
 # Future Work
 
