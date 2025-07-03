@@ -44,7 +44,7 @@ After that I added a hole for the speaker and the cables for the Raspberry Pi.
 
 I went to the center of my city to try and find ebony but I had to leave because it is a semi dangerous place and I felt unsafe. I plan on returning with my mom to see if we can find it but for now I plan on ordering cubes on Temu and painting/staining them.
 
-After making the box I fired up KiCad to connct the components, following a [tutorial](https://pimylifeup.com/raspberry-pi-rfid-rc522/) to connect the NFC reader to the Raspberry Pi and also a [guide by Adafruit](https://learn.adafruit.com/adafruit-max98357-i2s-class-d-mono-amp/raspberry-pi-wiring) for the amp wiring.
+After making the box I fired up KiCad to connct the components, following a [tutorial](https://pimylifeup.com/raspberry-pi-rfid-rc522/) to connect the NFC reader to the Raspberry Pi and also a [guide by Adafruit](https://learn.adafruit.com/adafruit-max98357-i2s-class-d-mono-amp/raspberry-pi-wiring) for the amp wiring. The NFC is connected via SPI to the Raspberry PI and the amp is connected via a DAC. THe buttons I attached them to the GPIO inputs of the Raspberry PI.
 
 ![alt text](/images/wiring.png)
 

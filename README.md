@@ -61,6 +61,8 @@
 - Push‑push hardware custom‑fitted into disk slot.
 - Buttons to play/pause, fastforward, and rewind
 
+![alt text](/images/full.png)
+
 ![alt text](/images/disk.png)
 
 ![alt text](/images/jukeboxdiskinside.png)
