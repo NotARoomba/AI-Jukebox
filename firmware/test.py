@@ -10,7 +10,7 @@ def read_ultralight_tag(reader):
     """Read data from an ultralight tag"""
     print("Waiting for ultralight tag to read...")
     
-    # Wait for card detection
+    # Wait for card detection (single attempt)
     while True:
         (status, TagType) = reader.MFRC522_Request(reader.PICC_REQIDL)
         if status == reader.MI_OK:
@@ -35,8 +35,6 @@ def read_ultralight_tag(reader):
     
     # Read up to 32 pages (pages 4-35) - user data area
     for page_addr in range(4, 36):
-        print(f"Reading page {page_addr}...")
-        
         # Use the standard read command but handle 4-byte response for ultralight
         recvData = []
         recvData.append(reader.PICC_READ)
@@ -50,9 +48,7 @@ def read_ultralight_tag(reader):
             # For ultralight tags, we get 4 bytes per page
             page_data = backData[:4]  # Take first 4 bytes
             data_bytes.extend(page_data)
-            print(f"Page {page_addr}: {page_data}")
         else:
-            print(f"Failed to read page {page_addr} or no data")
             # If we can't read a page, assume we've reached the end
             break
     
@@ -124,8 +120,6 @@ def write_ultralight_tag(reader, text):
         while len(page_data) < 4:
             page_data.append(0)
         
-        print(f"Writing page {page_addr}: {page_data}")
-        
         # Write to ultralight page
         reader.MFRC522_WriteUltralight(page_addr, page_data)
         
@@ -153,7 +147,7 @@ def main():
     
     try:
         if args.write:
-            # Write mode
+            # Write mode - write once
             print(f"Write mode: '{args.write}'")
             success = write_ultralight_tag(reader, args.write)
             if success:
@@ -161,29 +155,17 @@ def main():
             else:
                 print("Write operation failed!")
         else:
-            # Read mode (default)
-            print("Read mode: Press Ctrl+C to exit")
-            while True:
-                try:
-                    uid, text = read_ultralight_tag(reader)
-                    if uid:
-                        print(f"\nTag UID: {uid}")
-                        if text:
-                            print(f"Data: {text}")
-                        else:
-                            print("No readable data found on tag")
-                    else:
-                        print("Failed to read tag")
-                    
-                    print("\n" + "="*50)
-                    print("Place another tag to read, or press Ctrl+C to exit")
-                    
-                except KeyboardInterrupt:
-                    print("\nExiting...")
-                    break
-                except Exception as e:
-                    print(f"Error reading tag: {e}")
-                    time.sleep(1)
+            # Read mode - read once
+            print("Read mode: Place a tag to read")
+            uid, text = read_ultralight_tag(reader)
+            if uid:
+                print(f"\nTag UID: {uid}")
+                if text:
+                    print(f"Data: {text}")
+                else:
+                    print("No readable data found on tag")
+            else:
+                print("Failed to read tag")
     
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
