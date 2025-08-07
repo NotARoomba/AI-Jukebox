@@ -438,7 +438,7 @@ class MFRC522:
                 self.NTAG = self.NTAG_215
                 self.NTAG_MaxPage = 134                  
                 return True
-            if rcv[6] == 0x13:
+            if rcv[7] == 0x13:
                 self.NTAG = self.NTAG_216
                 self.NTAG_MaxPage = 230                  
                 return True
