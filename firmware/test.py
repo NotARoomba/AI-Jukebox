@@ -52,7 +52,7 @@ def write_string_to_card(reader, uid, text):
         # 6E = 'n' (language code)
         # Then the actual text data
         
-        # Calculate total NDEF length
+        # Calculate total NDEF length (excluding the TLV tag and length byte)
         ndef_length = 1 + 1 + 1 + 1 + 2 + text_length  # D1 + 01 + 0C + 02 + language + text
         
         print(f"NDEF length: {ndef_length}")
@@ -64,7 +64,7 @@ def write_string_to_card(reader, uid, text):
         block4[2] = 0xD1  # NDEF record header (text record)
         block4[3] = 0x01  # NDEF record type
         block4[4] = 0x0C  # Text record type length
-        block4[5] = 0x02  # Text record payload length
+        block4[5] = text_length  # Text record payload length
         block4[6] = 0x65  # 'e' (language code)
         block4[7] = 0x6E  # 'n' (language code)
         
@@ -153,6 +153,11 @@ def read_string_from_card(reader, uid):
         ndef_length = block4[1]
         print(f"NDEF length: {ndef_length}")
         
+        # Check if NDEF is empty
+        if ndef_length == 0:
+            print("✗ NDEF is empty")
+            return None
+        
         # Check if it's a text record
         if block4[2] != 0xD1:
             print("✗ Not a text record")
@@ -166,30 +171,41 @@ def read_string_from_card(reader, uid):
         text_length = block4[5]
         print(f"Text length: {text_length}")
         
+        # Check if text length is valid
+        if text_length == 0:
+            print("✗ Text length is 0")
+            return None
+        
         # Extract text from all blocks
         text_bytes = bytearray()
         start_pos = 8  # Start after language code (2 bytes)
         
-        # Read from block 4
+        # Read from block 4 (only the text part, not the full block)
+        bytes_read = 0
         for i in range(start_pos, min(start_pos + text_length, len(block4))):
-            if block4[i] != 0:
+            if block4[i] != 0 and block4[i] != 0xFE:  # Skip null bytes and terminator
                 text_bytes.append(block4[i])
+                bytes_read += 1
+                if bytes_read >= text_length:
+                    break
         
         # Calculate how many more blocks we need to read
-        remaining_length = text_length - (len(block4) - start_pos)
+        remaining_length = text_length - bytes_read
         current_block = 5
         
         while remaining_length > 0 and current_block <= reader.NTAG_MaxPage:
             stat, block = reader.read(current_block)
             if stat == reader.OK and block and len(block) > 0:
                 print(f"Block {current_block}: {' '.join([f'{b:02X}' for b in block])}")
-                for i in range(min(remaining_length, len(block))):
-                    if block[i] != 0:
+                for i in range(len(block)):
+                    if remaining_length <= 0:
+                        break
+                    if block[i] != 0 and block[i] != 0xFE:  # Skip null bytes and terminator
                         text_bytes.append(block[i])
-                remaining_length -= len(block)
-                current_block += 1
+                        remaining_length -= 1
             else:
                 break
+            current_block += 1
         
         if not text_bytes:
             print("✗ No text data found")
