@@ -68,6 +68,30 @@ def read_ultralight_tag(reader):
     else:
         return uid, ""
 
+def clear_ultralight_tag(reader, start_page=4, end_page=35):
+    """Clear all user data pages on an ultralight tag by writing zeros"""
+    print("Clearing card data...")
+    
+    # Clear all user data pages (4-35) with zeros
+    pages_cleared = 0
+    for page_addr in range(start_page, end_page + 1):
+        try:
+            # Create a 4-byte zero buffer
+            zero_data = [0x00, 0x00, 0x00, 0x00]
+            
+            # Write zeros to the page
+            reader.MFRC522_WriteUltralight(page_addr, zero_data)
+            
+            # Small delay to ensure write completes
+            time.sleep(0.1)
+            pages_cleared += 1
+            
+        except Exception as e:
+            print(f"Warning: Failed to clear page {page_addr}: {e}")
+            # Continue with next page
+    
+    print(f"Cleared {pages_cleared} pages ({start_page} to {end_page})")
+
 def write_ultralight_tag(reader, text):
     """Write data to an ultralight tag"""
     if not text:
@@ -95,6 +119,9 @@ def write_ultralight_tag(reader, text):
     
     # Select the tag
     reader.MFRC522_SelectTag(uid)
+    
+    # Clear the card before writing
+    clear_ultralight_tag(reader)
     
     # Convert text to bytes and pad to 4-byte chunks
     text_bytes = text.encode('ascii')
