@@ -40,6 +40,17 @@ GPIO.setup(PIN_PLAY_PAUSE, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(PIN_REWIND,     GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(PIN_FORWARD,    GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
+# Minecraft UID to song mapping
+# This maps specific NFC tag UIDs to Minecraft music disk files
+# The audio files should be placed in the audio/ directory
+MINECRAFT_UID_MAP = {
+    '8804C33679': 'haggstrom',  # Specific mapping for haggstrom
+    # Add more UID mappings here as needed
+    # '1234567890': 'minecraft',
+    # 'ABCDEF1234': 'chirp',
+    # 'FEDCBA0987': 'cat',
+}
+
 # Mood Flags and functions
 MOOD_FLAGS = {
     'HAPPY':       0x01,
@@ -69,6 +80,15 @@ def get_audio_information(audio_ids):
 # Song Playback Function
 def play_audio_url(audio_url):
     print(f"Playing: {audio_url}")
+    
+    # Check if it's a local file
+    if audio_url.startswith('audio/'):
+        import os
+        if not os.path.exists(audio_url):
+            print(f"Error: Audio file not found: {audio_url}")
+            print("Please ensure the audio file exists in the audio/ directory")
+            return
+    
     player = vlc.MediaPlayer(audio_url)
     player.play()
     is_playing = True
@@ -106,7 +126,8 @@ def play_audio_url(audio_url):
 
             time.sleep(0.1)
     finally:
-        GPIO.cleanup()
+        player.stop()
+        player.release()
 
 def process_ntag_data(uid, text_data, ntag_type):
     """
@@ -121,12 +142,23 @@ def process_ntag_data(uid, text_data, ntag_type):
         Tuple of (song_type, song_data) or (None, None) if no valid song data
     """
     try:
-        # Check for text data first
+        # Convert UID to hex string for mapping lookup
+        if isinstance(uid, bytes):
+            uid_hex = ''.join([f'{b:02X}' for b in uid])
+        else:
+            uid_hex = uid
+        
+        # Check for UID-based Minecraft song mapping first
+        if uid_hex in MINECRAFT_UID_MAP:
+            song_name = MINECRAFT_UID_MAP[uid_hex]
+            print(f"Found UID-based Minecraft song mapping: {uid_hex} -> {song_name}")
+            return 'minecraft', song_name
+        
+        # Check for text data
         if text_data and text_data.strip():
             return process_text_payload(text_data.strip())
         
-        # If no text data, could check UID for encoded data
-        uid_hex = ''.join([f'{b:02X}' for b in uid])
+        # If no text data and no UID mapping, could check UID for encoded data
         if uid_hex and len(uid_hex) >= 8:
             # Could encode data in UID (though this is unusual)
             pass
@@ -201,25 +233,25 @@ def main():
                     decoded_data = reader.read_and_decode_ntag215()
                     
                     if decoded_data:
-                        uid = decoded_data.get('uid', {}).get('hex', 'Unknown')
-                        print(f"NTAG215 Card detected - UID: {uid}")
+                        uid_hex = decoded_data.get('uid', {}).get('hex', 'Unknown')
+                        print(f"NTAG215 Card detected - UID: {uid_hex}")
                         
-                        # Process the decoded data
-                        song_type, song_data = process_ntag_data(uid, decoded_data.get('ndef_data', {}).get('payload_text', ''), NTAGType.NTAG215)
+                        # Process the decoded data (pass UID as hex string)
+                        song_type, song_data = process_ntag_data(uid_hex, decoded_data.get('ndef_data', {}).get('payload_text', ''), NTAGType.NTAG215)
                         
                         if song_type == 'minecraft':
-                            if last_uid == uid:
+                            if last_uid == uid_hex:
                                 tries = 0
-                                last_uid = uid
+                                last_uid = uid_hex
                                 continue
                             song_name = song_data
                             print(f"Playing Minecraft song: {song_name}")
                             play_audio_url(f"audio/{song_name}.mp3")
                             
                         elif song_type == 'ai':
-                            if last_uid == uid:
+                            if last_uid == uid_hex:
                                 tries = 0
-                                last_uid = uid
+                                last_uid = uid_hex
                                 continue
                             mask = song_data
                             moods = extract_flags(mask)
@@ -248,7 +280,7 @@ def main():
                                 time.sleep(5)
                         else:
                             print("Unknown song format or no valid song data found.")
-                            last_uid = uid
+                            last_uid = uid_hex
                     else:
                         print("No card detected or failed to decode")
                         
@@ -293,44 +325,41 @@ def main():
                                     text_data = ''.join(chr(b) for b in data_bytes if b >= 32 and b <= 126)
                                     print(f"Raw tag data: {text_data}")
                         
-                        if text_data:
-                            # Process the text data
-                            song_type, song_data = process_ntag_data(uid, text_data, ntag_type)
+                        # Process the data (including UID-based mapping)
+                        song_type, song_data = process_ntag_data(uid, text_data, ntag_type)
+                        
+                        if song_type == 'minecraft':
+                            song_name = song_data
+                            print(f"Playing Minecraft song: {song_name}")
+                            play_audio_url(f"audio/{song_name}.mp3")
                             
-                            if song_type == 'minecraft':
-                                song_name = song_data
-                                print(f"Playing Minecraft song: {song_name}")
-                                play_audio_url(f"audio/{song_name}.mp3")
-                                
-                            elif song_type == 'ai':
-                                mask = song_data
-                                moods = extract_flags(mask)
-                                print(f"Playing AI generated song with moods: {', '.join(moods)}")
-                                data = generate_audio_by_prompt({
-                                    "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
-                                    "make_instrumental": True,
-                                    "wait_audio": False
-                                })
+                        elif song_type == 'ai':
+                            mask = song_data
+                            moods = extract_flags(mask)
+                            print(f"Playing AI generated song with moods: {', '.join(moods)}")
+                            data = generate_audio_by_prompt({
+                                "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
+                                "make_instrumental": True,
+                                "wait_audio": False
+                            })
 
-                                ids = f"{data[0]['id']},{data[1]['id']}"
-                                print(f"ids: {ids}")
+                            ids = f"{data[0]['id']},{data[1]['id']}"
+                            print(f"ids: {ids}")
 
-                                for _ in range(60):
-                                    data = get_audio_information(ids)
-                                    if data[0]["status"] == 'streaming':
-                                        url_1 = data[0]["audio_url"]
-                                        url_2 = data[1]["audio_url"]
-                                        print(f"{data[0]['id']} ==> {url_1}")
-                                        print(f"{data[1]['id']} ==> {url_2}")
-                                        
-                                        play_audio_url(url_1)
-                                        play_audio_url(url_2)
-                                        break
-                                    time.sleep(5)
-                            else:
-                                print("Unknown song format or no valid song data found.")
+                            for _ in range(60):
+                                data = get_audio_information(ids)
+                                if data[0]["status"] == 'streaming':
+                                    url_1 = data[0]["audio_url"]
+                                    url_2 = data[1]["audio_url"]
+                                    print(f"{data[0]['id']} ==> {url_1}")
+                                    print(f"{data[1]['id']} ==> {url_2}")
+                                    
+                                    play_audio_url(url_1)
+                                    play_audio_url(url_2)
+                                    break
+                                time.sleep(5)
                         else:
-                            print("No readable data found on tag")
+                            print("Unknown song format or no valid song data found.")
                         
                         last_uid = uid_str
                     else:
