@@ -215,12 +215,16 @@ class NTAG215Tester:
                 
                 print(f"Preparing page {page}: {bytes(page_data).hex().upper()}")
                 
-                # Write page - MFRC522_Write doesn't return a tuple
+                # Write page using custom NTAG215 write method
                 try:
                     print(f"Writing page {page} with data: {page_data}")
-                    self.reader.reader.MFRC522_Write(page, page_data)
-                    bytes_written += min(4, len(text_bytes) - i)
-                    print(f"✓ Wrote page {page}: {bytes(page_data).hex().upper()}")
+                    success = self._write_ntag215_page(page, page_data)
+                    if success:
+                        bytes_written += min(4, len(text_bytes) - i)
+                        print(f"✓ Wrote page {page}: {bytes(page_data).hex().upper()}")
+                    else:
+                        print(f"✗ Failed to write page {page}")
+                        return False
                 except Exception as e:
                     print(f"✗ Failed to write page {page}: {e}")
                     print(f"  Page data: {page_data}")
@@ -238,6 +242,84 @@ class NTAG215Tester:
         finally:
             # Stop crypto
             self.reader.reader.MFRC522_StopCrypto1()
+    
+    def _write_ntag215_page(self, page: int, data: list) -> bool:
+        """
+        Write a single page to NTAG215 tag
+        
+        Args:
+            page: Page number (0-35)
+            data: 4-byte data to write
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Ensure data is exactly 4 bytes
+            if len(data) != 4:
+                print(f"Error: Data must be exactly 4 bytes, got {len(data)}")
+                return False
+            
+            # Check if page is valid for NTAG215
+            if page < 0 or page > 35:
+                print(f"Error: Invalid page number {page} for NTAG215 (0-35)")
+                return False
+            
+            # Check if page is writable (pages 0-3 are reserved)
+            if page < 4:
+                print(f"Warning: Writing to reserved page {page} may cause issues")
+            
+            # Prepare write command for NTAG215
+            # NTAG215 write command: 0xA2 + page_address + 4 bytes of data
+            write_cmd = [0xA2, page] + data
+            
+            print(f"Send command: {[hex(x) for x in write_cmd]}")
+            
+            # Send the write command
+            try:
+                (status, backData, backLen) = self.reader.reader.MFRC522_ToCard(
+                    self.reader.reader.PCD_TRANSCEIVE, write_cmd
+                )
+            except Exception as e:
+                print(f"Error calling MFRC522_ToCard: {e}")
+                return False
+            
+            print(f"Response - status: {status}, backData: {backData}, backLen: {backLen}")
+            
+            if status == self.reader.reader.MI_OK:
+                # Check if write was successful
+                # NTAG215 should return ACK (0x0A) for successful writes
+                if len(backData) > 0:
+                    ack = backData[0] & 0x0F
+                    if ack == 0x0A:
+                        print(f"✓ Write successful - ACK: 0x{ack:02X}")
+                        return True
+                    else:
+                        print(f"✗ Write failed - unexpected ACK: 0x{ack:02X}")
+                        # Try to provide more specific error information
+                        if ack == 0x00:
+                            print("  Possible cause: Page is locked or read-only")
+                        elif ack == 0x01:
+                            print("  Possible cause: Invalid page address")
+                        elif ack == 0x02:
+                            print("  Possible cause: Write error")
+                        return False
+                else:
+                    print(f"✗ Write failed - no response data")
+                    return False
+            else:
+                print(f"✗ Write failed - status: {status}")
+                if status == self.reader.reader.MI_NOTAGERR:
+                    print("  Possible cause: Tag was removed during write")
+                elif status == self.reader.reader.MI_ERR:
+                    print("  Possible cause: Communication error")
+                return False
+                
+        except Exception as e:
+            print(f"Error in _write_ntag215_page: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _write_with_basic_reader(self, text: str) -> bool:
         """Write using basic reader"""
