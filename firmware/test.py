@@ -57,7 +57,18 @@ class NTAG215Reader:
             data = []
             for page in range(4, 36):  # Read user data pages
                 try:
-                    status, page_data = self.reader.MFRC522_Read(page)
+                    result = self.reader.MFRC522_Read(page)
+                    # Handle different return formats
+                    if isinstance(result, tuple):
+                        if len(result) >= 2:
+                            status, page_data = result[0], result[1]
+                        else:
+                            print(f"Unexpected return format from MFRC522_Read: {result}")
+                            break
+                    else:
+                        print(f"Unexpected return type from MFRC522_Read: {type(result)}")
+                        break
+                        
                     if status == self.reader.MI_OK:
                         data.extend(page_data)
                     else:
@@ -106,7 +117,16 @@ class NTAG215Reader:
                     page_data += b'\x00'
                 
                 try:
-                    status = self.reader.MFRC522_Write(page, list(page_data))
+                    result = self.reader.MFRC522_Write(page, list(page_data))
+                    # Handle different return formats
+                    if isinstance(result, (int, bool)):
+                        status = result
+                    elif isinstance(result, tuple) and len(result) > 0:
+                        status = result[0]
+                    else:
+                        print(f"Unexpected return format from MFRC522_Write: {result}")
+                        return False
+                        
                     if status != self.reader.MI_OK:
                         print(f"Failed to write page {page}")
                         return False
