@@ -1,5 +1,4 @@
-# MFRC522 Library for All NTAG Types
-from .MFRC522 import MFRC522, NTAGType, NDEFRecord
+from .MFRC522 import MFRC522
 from .SimpleMFRC522 import SimpleMFRC522
 
-__all__ = ['MFRC522', 'NTAGType', 'NDEFRecord', 'SimpleMFRC522']
+name = "mfrc522"
