@@ -8,6 +8,12 @@ PIN_REWIND = 27
 PIN_FORWARD = 22
 
 
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(PIN_PLAY_PAUSE, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(PIN_REWIND,     GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(PIN_FORWARD,    GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+
 
 # Song Playback Function
 def play_audio_url(audio_url):
@@ -61,4 +67,13 @@ def play_audio_url(audio_url):
         player.stop()
         player.release()
 
-play_audio_url(f"audio/haggstrom.mp3")
+def main():
+    try:
+        play_audio_url(f"audio/haggstrom.mp3")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
