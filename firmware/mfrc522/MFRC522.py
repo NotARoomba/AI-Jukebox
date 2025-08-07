@@ -234,7 +234,7 @@ class MFRC522:
         
         for i in serNum:
             buf.append(i)
-        
+
         pOut = self._crc(buf)
         buf.append(pOut[0])
         buf.append(pOut[1])
@@ -243,7 +243,7 @@ class MFRC522:
             return 1
         else:
             return 0
-    
+
     def SelectTag(self, uid):
         """Select tag by UID"""
         byte5 = 0
@@ -368,7 +368,7 @@ class MFRC522:
         return stat
 
     def writeNTAGPage(self, page, data):
-        """Write a page to NTAG (4 bytes)"""
+        """Write a page to NTAG (4 bytes) using NTAG-specific command 0xA2"""
         if page > self.NTAG_MaxPage:
             return self.ERR
         if page < 4:
@@ -376,45 +376,40 @@ class MFRC522:
         if len(data) != 4:
             return self.ERR
         
-        return self.write(page, data + [0] * 12)
-    
-    def writeNTAGBlock(self, page, data):
-        """Write a block to NTAG (16 bytes) using NTAG-specific command"""
-        if page > self.NTAG_MaxPage:
-            return self.ERR
-        if page < 4:
-            return self.ERR
-        if len(data) != 16:
-            return self.ERR
-        
-        # NTAG write command: 0xA2
-        buf = [0xA2, page]
-        
-        # Add the data (16 bytes)
-        for i in range(16):
-            buf.append(data[i])
-        
-        # Send the command
+        # NTAG page write command: [0xA2, page, d0, d1, d2, d3]
+        buf = [0xA2, page] + list(data)
         (stat, recv, bits) = self._tocard(0x0C, buf)
-        
         if stat == self.OK:
-            # NTAG cards typically return 4 bytes with ACK (0x0A) in the first byte
-            # But some cards might return different responses or no response at all
-            if len(recv) > 0:
-                if recv[0] == 0x0A:  # Standard ACK
-                    return self.OK
-                elif recv[0] == 0x0F:  # Alternative ACK
-                    return self.OK
-                else:
-                    # Print debug info but still consider it successful if we got here
-                    print(f"NTAG write response: {[f'{b:02X}' for b in recv] if recv else 'None'}")
-                    return self.OK
-            else:
-                # No response but command succeeded
+            if len(recv) == 0:
                 return self.OK
+            if recv[0] in (0x0A, 0x0F):
+                return self.OK
+            # Some tags echo last frame; accept but log
+            # print(f"NTAG page write response: {[f'{b:02X}' for b in recv]}")
+            return self.OK
         else:
-            print(f"NTAG write failed: status={stat}, bits={bits}")
+            # print(f"NTAG page write failed: status={stat}, bits={bits}")
             return self.ERR
+
+    def writeNTAGBlock(self, base_page, data16):
+        """Write 16 bytes across 4 consecutive NTAG pages starting at base_page."""
+        if base_page < 4 or base_page > self.NTAG_MaxPage:
+            return self.ERR
+        if len(data16) != 16:
+            return self.ERR
+        
+        # Split into 4-byte pages and write pages base_page .. base_page+3
+        for i in range(4):
+            page = base_page + i
+            if page > self.NTAG_MaxPage:
+                return self.ERR
+            start = i * 4
+            end = start + 4
+            page_bytes = data16[start:end]
+            stat = self.writeNTAGPage(page, page_bytes)
+            if stat != self.OK:
+                return self.ERR
+        return self.OK
 
     def writeNTAGBlockSimple(self, page, data):
         """Write a block to NTAG (16 bytes) using NTAG-specific command with simpler validation"""

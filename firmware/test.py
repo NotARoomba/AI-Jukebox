@@ -18,7 +18,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 def write_string_to_card(reader, uid, text):
-    """Write a string to the NFC card using NTAG methods"""
+    """Write a string to the NFC card using NTAG page writes (4 bytes/page)."""
     print(f"Writing '{text}' to card...")
     
     try:
@@ -26,7 +26,6 @@ def write_string_to_card(reader, uid, text):
         print("Checking if card is NTAG...")
         if not reader.IsNTAG():
             print("✗ Card is not an NTAG card")
-            # Try to get NTAG version anyway for debugging
             stat, rcv = reader.getNTAGVersion()
             if stat == reader.OK:
                 print(f"NTAG version response: {[f'{b:02X}' for b in rcv]}")
@@ -37,99 +36,48 @@ def write_string_to_card(reader, uid, text):
         # Convert text to bytes
         text_bytes = text.encode('utf-8')
         text_length = len(text_bytes)
-        
         print(f"Text length: {text_length} bytes")
         
-        # Prepare NDEF data
-        # Block 4: NDEF TLV structure
-        # 03 = NDEF TLV tag
-        # Length byte will be calculated
-        # D1 = NDEF record header (text record)
-        # 01 = NDEF record type
-        # 0C = text record type length
-        # 02 = text record payload length
-        # 65 = 'e' (language code)
-        # 6E = 'n' (language code)
-        # Then the actual text data
+        # Build NDEF TLV in a bytearray buffer
+        # TLV: 03 LL D1 01 0C PL 65 6E [text...] FE
+        buffer = bytearray()
+        ndef_len = 1 + 1 + 1 + 1 + 2 + text_length  # D1 01 0C PL 65 6E + text
+        buffer += bytes([0x03, ndef_len, 0xD1, 0x01, 0x0C, text_length, 0x65, 0x6E])
+        buffer += text_bytes
+        buffer += bytes([0xFE])
         
-        # Calculate total NDEF length (excluding the TLV tag and length byte)
-        ndef_length = 1 + 1 + 1 + 1 + 2 + text_length  # D1 + 01 + 0C + 02 + language + text
+        # Pad to 4-byte boundary
+        while len(buffer) % 4 != 0:
+            buffer += b"\x00"
         
-        print(f"NDEF length: {ndef_length}")
+        print(f"Total NDEF bytes (padded): {len(buffer)}")
         
-        # Prepare block 4 data (exactly 16 bytes)
-        block4 = [0] * 16  # Initialize with zeros
-        block4[0] = 0x03  # NDEF TLV tag
-        block4[1] = ndef_length  # NDEF length
-        block4[2] = 0xD1  # NDEF record header (text record)
-        block4[3] = 0x01  # NDEF record type
-        block4[4] = 0x0C  # Text record type length
-        block4[5] = text_length  # Text record payload length
-        block4[6] = 0x65  # 'e' (language code)
-        block4[7] = 0x6E  # 'n' (language code)
+        # Write starting at page 4
+        start_page = 4
+        num_pages = len(buffer) // 4
+        current_page = start_page
+        idx = 0
         
-        # Copy text data to block 4 (max 8 bytes)
-        for i, byte in enumerate(text_bytes[:8]):
-            block4[i + 8] = byte
-        
-        print(f"Block 4 data: {' '.join([f'{b:02X}' for b in block4])}")
-        
-        # Use NTAG-specific write method
-        print("Writing block 4...")
-        result = reader.writeNTAGBlockDirect(4, block4)
-        if result == reader.OK:
-            print("✓ Successfully wrote block 4")
-            
-            # Verify the write by reading it back
-            print("Verifying write by reading block 4...")
-            stat, read_block4 = reader.readNTAGBlock(4)
-            if stat == reader.OK and read_block4:
-                print(f"Read back block 4: {' '.join([f'{b:02X}' for b in read_block4])}")
-                if read_block4[0] == 0x03 and read_block4[1] == ndef_length:
-                    print("✓ Write verification successful")
-                else:
-                    print("✗ Write verification failed - data corrupted")
-                    return False
-            else:
-                print("✗ Could not read back block 4 for verification")
+        while idx < len(buffer) and current_page <= reader.NTAG_MaxPage:
+            page_bytes = list(buffer[idx:idx+4])
+            stat = reader.writeNTAGPage(current_page, page_bytes)
+            if stat != reader.OK:
+                print(f"✗ Failed to write page {current_page}")
                 return False
-        else:
-            print(f"✗ Failed to write block 4: {result}")
-            return False
+            idx += 4
+            current_page += 1
         
-        # If text is longer than 8 bytes, write to block 5
-        if text_length > 8:
-            block5 = [0] * 16  # Initialize with zeros
-            remaining_text = text_bytes[8:]
-            for i, byte in enumerate(remaining_text[:16]):  # Limit to 16 bytes
-                block5[i] = byte
-            
-            print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
-            
-            print("Writing block 5...")
-            result = reader.writeNTAGBlockDirect(5, block5)
-            if result == reader.OK:
-                print("✓ Successfully wrote block 5")
-            else:
-                print(f"✗ Failed to write block 5: {result}")
-                return False
+        print("✓ Wrote NDEF across pages", start_page, "to", current_page - 1)
         
-        # Write terminator TLV
-        block_terminator = [0] * 16  # Initialize with zeros
-        block_terminator[0] = 0xFE  # Terminator TLV
-        
-        # Find the next available block
-        next_block = 6 if text_length > 8 else 5
-        print(f"Writing terminator to block {next_block}...")
-        result = reader.writeNTAGBlockDirect(next_block, block_terminator)
-        if result == reader.OK:
-            print("✓ Successfully wrote terminator")
-        else:
-            print(f"✗ Failed to write terminator: {result}")
-            return False
+        # Verify first two pages quickly
+        ok4, p4 = reader.readNTAGBlock(4)
+        ok5, p5 = reader.readNTAGBlock(5)
+        if ok4 == reader.OK and p4:
+            print("Page 4..7 (block 4) after write:", ' '.join([f"{b:02X}" for b in p4]))
+        if ok5 == reader.OK and p5:
+            print("Page 8..11 (block 5) after write:", ' '.join([f"{b:02X}" for b in p5]))
         
         return True
-        
     except Exception as e:
         print(f"Error in write_string_to_card: {e}")
         import traceback
