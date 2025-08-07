@@ -6,77 +6,20 @@ import RPi.GPIO as GPIO
 PIN_PLAY_PAUSE = 17
 PIN_REWIND     = 27
 PIN_FORWARD    = 22
-PIN_VOLUME_UP  = 23  # Add volume up button
-PIN_VOLUME_DOWN = 24  # Add volume down button
 
-# Default volume setting (0-100)
-DEFAULT_VOLUME = 80  # 70% volume by default
+# Volume setting (0-100)
+VOLUME = 80  # 80% volume by default
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(PIN_PLAY_PAUSE, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(PIN_REWIND,     GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(PIN_FORWARD,    GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-GPIO.setup(PIN_VOLUME_UP,  GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-GPIO.setup(PIN_VOLUME_DOWN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
 # Volume Control System
 # Uses amixer to control system volume
 # Supports multiple mixer types: Master, PCM, Speaker, Headphone
-# Includes mute/unmute functionality
 # Volume range: 0-100%
-# Default volume: 70%
-
-def mute_audio():
-    """
-    Mute system audio using amixer
-    """
-    try:
-        import subprocess
-        mixer_names = ['Master', 'PCM', 'Speaker', 'Headphone']
-        
-        for mixer in mixer_names:
-            try:
-                cmd = f"amixer set {mixer} mute"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    print(f"Audio muted using {mixer} mixer")
-                    return True
-            except Exception as e:
-                print(f"Failed to mute using {mixer} mixer: {e}")
-                continue
-        
-        print("Failed to mute audio with any mixer")
-        return False
-        
-    except Exception as e:
-        print(f"Error muting audio: {e}")
-        return False
-
-def unmute_audio():
-    """
-    Unmute system audio using amixer
-    """
-    try:
-        import subprocess
-        mixer_names = ['Master', 'PCM', 'Speaker', 'Headphone']
-        
-        for mixer in mixer_names:
-            try:
-                cmd = f"amixer set {mixer} unmute"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    print(f"Audio unmuted using {mixer} mixer")
-                    return True
-            except Exception as e:
-                print(f"Failed to unmute using {mixer} mixer: {e}")
-                continue
-        
-        print("Failed to unmute audio with any mixer")
-        return False
-        
-    except Exception as e:
-        print(f"Error unmuting audio: {e}")
-        return False
+# Default volume: 80%
 
 def set_volume(volume_percent):
     """
@@ -162,7 +105,7 @@ def show_volume_info():
         print(f"Current system volume: {current_volume}%")
     else:
         print("Could not determine current volume")
-    print(f"Default playback volume: {DEFAULT_VOLUME}%")
+    print(f"Default playback volume: {VOLUME}%")
 
 # Song Playback Function
 def play_audio_url(audio_url, volume_percent=None):
@@ -180,12 +123,11 @@ def play_audio_url(audio_url, volume_percent=None):
     if volume_percent is not None:
         set_volume(volume_percent)
     else:
-        set_volume(DEFAULT_VOLUME) # Use default volume if not specified
+        set_volume(VOLUME) # Use default volume if not specified
     
     player = vlc.MediaPlayer(audio_url)
     player.play()
     is_playing = True
-    current_volume = volume_percent if volume_percent is not None else DEFAULT_VOLUME
 
     try:
         while True:
@@ -211,24 +153,11 @@ def play_audio_url(audio_url, volume_percent=None):
                 print("Rewind 10s")
                 time.sleep(0.3)  # debounce
 
-            # if GPIO.input(PIN_FORWARD) == GPIO.HIGH:
-            #     current_time = player.get_time()
-            #     length = player.get_length()
-            #     player.set_time(min(current_time + 10000, length))
-            #     print("Forward 10s")
-            #     time.sleep(0.3)  # debounce
-
-            # Volume control buttons
-            if GPIO.input(PIN_VOLUME_UP) == GPIO.HIGH:
-                current_volume = min(100, current_volume + 10)
-                set_volume(current_volume)
-                print(f"Volume increased to {current_volume}%")
-                time.sleep(0.3)  # debounce
-
-            if GPIO.input(PIN_VOLUME_DOWN) == GPIO.HIGH:
-                current_volume = max(0, current_volume - 10)
-                set_volume(current_volume)
-                print(f"Volume decreased to {current_volume}%")
+            if GPIO.input(PIN_FORWARD) == GPIO.HIGH:
+                current_time = player.get_time()
+                length = player.get_length()
+                player.set_time(min(current_time + 10000, length))
+                print("Forward 10s")
                 time.sleep(0.3)  # debounce
 
             time.sleep(0.1)
@@ -243,7 +172,7 @@ def main():
     print("==========================")
     
     try:
-        play_audio_url(f"audio/haggstrom.mp3", DEFAULT_VOLUME)
+        play_audio_url(f"audio/cat.mp3", VOLUME)
     except Exception as e:
         print(f"Error: {e}")
     finally:

@@ -8,25 +8,7 @@ import vlc
 import time
 import requests
 
-# Try to import the local mfrc522 library
-try:
-    from mfrc522 import MFRC522, NTAGType, NDEFRecord, SimpleMFRC522
-    MFRC522_AVAILABLE = True
-except ImportError:
-    # Fallback to global mfrc522 if local not available
-    try:
-        from mfrc522 import SimpleMFRC522
-        MFRC522_AVAILABLE = True
-    except ImportError:
-        MFRC522_AVAILABLE = False
-
-# Try to import enhanced reader and decoder
-try:
-    from enhanced_rfid_reader import EnhancedRFIDReader
-    from ntag215_decoder import NTAG215Decoder, decode_ntag215_raw_data
-    ENHANCED_AVAILABLE = True
-except ImportError:
-    ENHANCED_AVAILABLE = False
+from mfrc522 import MFRC522
 
 BASE_URL = "http://localhost:3000" # Suno API URL
 
@@ -34,18 +16,14 @@ BASE_URL = "http://localhost:3000" # Suno API URL
 PIN_PLAY_PAUSE = 17
 PIN_REWIND     = 27
 PIN_FORWARD    = 22
-PIN_VOLUME_UP  = 23  # Add volume up button
-PIN_VOLUME_DOWN = 24  # Add volume down button
 
-# Default volume setting (0-100)
-DEFAULT_VOLUME = 70  # 70% volume by default
+# Volume setting (0-100)
+VOLUME = 70  # 70% volume by default
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(PIN_PLAY_PAUSE, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(PIN_REWIND,     GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 GPIO.setup(PIN_FORWARD,    GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-GPIO.setup(PIN_VOLUME_UP,  GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-GPIO.setup(PIN_VOLUME_DOWN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
 # Minecraft UID to song mapping
 # This maps specific NFC tag UIDs to Minecraft music disk files
@@ -87,61 +65,8 @@ def get_audio_information(audio_ids):
 # Volume Control System
 # Uses amixer to control system volume
 # Supports multiple mixer types: Master, PCM, Speaker, Headphone
-# Includes mute/unmute functionality
 # Volume range: 0-100%
 # Default volume: 70%
-
-def mute_audio():
-    """
-    Mute system audio using amixer
-    """
-    try:
-        import subprocess
-        mixer_names = ['Master', 'PCM', 'Speaker', 'Headphone']
-        
-        for mixer in mixer_names:
-            try:
-                cmd = f"amixer set {mixer} mute"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    print(f"Audio muted using {mixer} mixer")
-                    return True
-            except Exception as e:
-                print(f"Failed to mute using {mixer} mixer: {e}")
-                continue
-        
-        print("Failed to mute audio with any mixer")
-        return False
-        
-    except Exception as e:
-        print(f"Error muting audio: {e}")
-        return False
-
-def unmute_audio():
-    """
-    Unmute system audio using amixer
-    """
-    try:
-        import subprocess
-        mixer_names = ['Master', 'PCM', 'Speaker', 'Headphone']
-        
-        for mixer in mixer_names:
-            try:
-                cmd = f"amixer set {mixer} unmute"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    print(f"Audio unmuted using {mixer} mixer")
-                    return True
-            except Exception as e:
-                print(f"Failed to unmute using {mixer} mixer: {e}")
-                continue
-        
-        print("Failed to unmute audio with any mixer")
-        return False
-        
-    except Exception as e:
-        print(f"Error unmuting audio: {e}")
-        return False
 
 def set_volume(volume_percent):
     """
@@ -233,12 +158,11 @@ def play_audio_url(audio_url, volume_percent=None):
     if volume_percent is not None:
         set_volume(volume_percent)
     else:
-        set_volume(DEFAULT_VOLUME) # Use default volume if not specified
+        set_volume(VOLUME) # Use default volume if not specified
     
     player = vlc.MediaPlayer(audio_url)
     player.play()
     is_playing = True
-    current_volume = volume_percent if volume_percent is not None else DEFAULT_VOLUME
 
     try:
         while True:
@@ -269,19 +193,6 @@ def play_audio_url(audio_url, volume_percent=None):
                 length = player.get_length()
                 player.set_time(min(current_time + 10000, length))
                 print("Forward 10s")
-                time.sleep(0.3)  # debounce
-
-            # Volume control buttons
-            if GPIO.input(PIN_VOLUME_UP) == GPIO.HIGH:
-                current_volume = min(100, current_volume + 10)
-                set_volume(current_volume)
-                print(f"Volume increased to {current_volume}%")
-                time.sleep(0.3)  # debounce
-
-            if GPIO.input(PIN_VOLUME_DOWN) == GPIO.HIGH:
-                current_volume = max(0, current_volume - 10)
-                set_volume(current_volume)
-                print(f"Volume decreased to {current_volume}%")
                 time.sleep(0.3)  # debounce
 
             time.sleep(0.1)
@@ -366,7 +277,7 @@ def show_volume_info():
         print(f"Current system volume: {current_volume}%")
     else:
         print("Could not determine current volume")
-    print(f"Default playback volume: {DEFAULT_VOLUME}%")
+    print(f"Default playback volume: {VOLUME}%")
 
 ###############################################
 
@@ -422,7 +333,7 @@ def main():
                                 continue
                             song_name = song_data
                             print(f"Playing Minecraft song: {song_name}")
-                            play_audio_url(f"audio/{song_name}.mp3", DEFAULT_VOLUME)
+                            play_audio_url(f"audio/{song_name}.mp3", VOLUME)
                             
                         elif song_type == 'ai':
                             if last_uid == uid_hex:
@@ -450,8 +361,8 @@ def main():
                                     print(f"{data[0]['id']} ==> {url_1}")
                                     print(f"{data[1]['id']} ==> {url_2}")
                                     
-                                    play_audio_url(url_1, DEFAULT_VOLUME)
-                                    play_audio_url(url_2, DEFAULT_VOLUME)
+                                    play_audio_url(url_1, VOLUME)
+                                    play_audio_url(url_2, VOLUME)
                                     break
                                 time.sleep(5)
                         else:
@@ -507,7 +418,7 @@ def main():
                         if song_type == 'minecraft':
                             song_name = song_data
                             print(f"Playing Minecraft song: {song_name}")
-                            play_audio_url(f"audio/{song_name}.mp3", DEFAULT_VOLUME)
+                            play_audio_url(f"audio/{song_name}.mp3", VOLUME)
                             
                         elif song_type == 'ai':
                             mask = song_data
@@ -530,8 +441,8 @@ def main():
                                     print(f"{data[0]['id']} ==> {url_1}")
                                     print(f"{data[1]['id']} ==> {url_2}")
                                     
-                                    play_audio_url(url_1, DEFAULT_VOLUME)
-                                    play_audio_url(url_2, DEFAULT_VOLUME)
+                                    play_audio_url(url_1, VOLUME)
+                                    play_audio_url(url_2, VOLUME)
                                     break
                                 time.sleep(5)
                         else:
