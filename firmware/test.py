@@ -270,43 +270,30 @@ class NTAG215Tester:
                 print(f"Warning: Writing to reserved page {page} may cause issues")
             
             # Prepare write command for NTAG215
-            # NTAG215 write command: 0xA2 + page_address + 4 bytes of data
-            # According to NTAG215 datasheet, the command should be:
-            # [0xA2, page_address, data0, data1, data2, data3]
+            # NTAG215 write command: 0xA2 + page_address + 4 bytes of data + CRC
             write_cmd = [0xA2, page] + data
             
+            # Calculate CRC for the command
+            crc = self._calculate_crc(write_cmd)
+            write_cmd.extend(crc)
+            
             print(f"Send command: {[hex(x) for x in write_cmd]}")
-            print(f"Command bytes: {write_cmd}")
-            print(f"Command length: {len(write_cmd)}")
-            
-            # Check if the command looks correct
-            if write_cmd[0] != 0xA2:
-                print(f"Error: Invalid write command 0x{write_cmd[0]:02X}, expected 0xA2")
-                return False
-            
-            if write_cmd[1] != page:
-                print(f"Error: Page mismatch {write_cmd[1]} != {page}")
-                return False
             
             # Send the write command
             try:
-                print(f"Sending command to MFRC522_ToCard...")
                 (status, backData, backLen) = self.reader.reader.MFRC522_ToCard(
                     self.reader.reader.PCD_TRANSCEIVE, write_cmd
                 )
-                print(f"MFRC522_ToCard completed")
             except Exception as e:
                 print(f"Error calling MFRC522_ToCard: {e}")
-                import traceback
-                traceback.print_exc()
                 return False
             
             print(f"Response - status: {status}, backData: {backData}, backLen: {backLen}")
             
             if status == self.reader.reader.MI_OK:
                 # Check if write was successful
-                # NTAG215 should return ACK (0x0A) for successful writes
-                if len(backData) > 0:
+                # NTAG215 should return 4 bytes with ACK (0x0A) for successful writes
+                if backLen == 4 and len(backData) > 0:
                     ack = backData[0] & 0x0F
                     if ack == 0x0A:
                         print(f"✓ Write successful - ACK: 0x{ack:02X}")
@@ -322,7 +309,9 @@ class NTAG215Tester:
                             print("  Possible cause: Write error")
                         return False
                 else:
-                    print(f"✗ Write failed - no response data")
+                    print(f"✗ Write failed - expected 4 bytes response, got {backLen}")
+                    if len(backData) > 0:
+                        print(f"  Response data: {backData}")
                     return False
             else:
                 print(f"✗ Write failed - status: {status}")
@@ -330,29 +319,6 @@ class NTAG215Tester:
                     print("  Possible cause: Tag was removed during write")
                 elif status == self.reader.reader.MI_ERR:
                     print("  Possible cause: Communication error")
-                    # Try to provide more specific debugging information
-                    print(f"  Command sent: {write_cmd}")
-                    print(f"  Command length: {len(write_cmd)}")
-                    print(f"  Page: {page}")
-                    print(f"  Data: {data}")
-                    
-                    # Try alternative approach - maybe the issue is with the command format
-                    print("  Trying alternative command format...")
-                    try:
-                        # Try sending the command in a different way
-                        alt_cmd = [0xA2, page] + data
-                        print(f"  Alternative command: {alt_cmd}")
-                        (alt_status, alt_backData, alt_backLen) = self.reader.reader.MFRC522_ToCard(
-                            self.reader.reader.PCD_TRANSCEIVE, alt_cmd
-                        )
-                        print(f"  Alternative response - status: {alt_status}, backData: {alt_backData}, backLen: {alt_backLen}")
-                        if alt_status == self.reader.reader.MI_OK and len(alt_backData) > 0:
-                            ack = alt_backData[0] & 0x0F
-                            if ack == 0x0A:
-                                print(f"  ✓ Alternative write successful!")
-                                return True
-                    except Exception as alt_e:
-                        print(f"  Alternative approach also failed: {alt_e}")
                 return False
                 
         except Exception as e:
@@ -360,6 +326,71 @@ class NTAG215Tester:
             import traceback
             traceback.print_exc()
             return False
+    
+    def _calculate_crc(self, data: list) -> list:
+        """
+        Calculate CRC for NTAG215 write command
+        
+        Args:
+            data: List of bytes to calculate CRC for
+            
+        Returns:
+            List of 2 bytes representing the CRC
+        """
+        try:
+            # Use the existing CRC calculation method from MFRC522
+            # The method is misspelled as 'CalulateCRC' in the original library
+            if hasattr(self.reader.reader, 'CalulateCRC'):
+                crc_result = self.reader.reader.CalulateCRC(data)
+                print(f"CRC calculated: {crc_result}")
+                return crc_result
+            else:
+                print("CalulateCRC method not found, using manual calculation")
+                return self._calculate_crc_manual(data)
+        except Exception as e:
+            print(f"Error calculating CRC: {e}")
+            # Fallback: return zeros if CRC calculation fails
+            return [0x00, 0x00]
+    
+    def _calculate_crc_manual(self, data: list) -> list:
+        """
+        Manual CRC calculation for NTAG215 (fallback method)
+        
+        Args:
+            data: List of bytes to calculate CRC for
+            
+        Returns:
+            List of 2 bytes representing the CRC
+        """
+        try:
+            # Clear CRC registers
+            self.reader.reader.ClearBitMask(self.reader.reader.DivIrqReg, 0x04)
+            self.reader.reader.SetBitMask(self.reader.reader.FIFOLevelReg, 0x80)
+            
+            # Write data to FIFO
+            for byte in data:
+                self.reader.reader.Write_MFRC522(self.reader.reader.FIFODataReg, byte)
+            
+            # Start CRC calculation
+            self.reader.reader.Write_MFRC522(self.reader.reader.CommandReg, self.reader.reader.PCD_CALCCRC)
+            
+            # Wait for CRC calculation to complete
+            i = 0xFF
+            while True:
+                n = self.reader.reader.Read_MFRC522(self.reader.reader.DivIrqReg)
+                i -= 1
+                if not ((i != 0) and not (n & 0x04)):
+                    break
+            
+            # Read CRC result
+            crc_low = self.reader.reader.Read_MFRC522(self.reader.reader.CRCResultRegL)
+            crc_high = self.reader.reader.Read_MFRC522(self.reader.reader.CRCResultRegM)
+            
+            return [crc_low, crc_high]
+            
+        except Exception as e:
+            print(f"Error in manual CRC calculation: {e}")
+            return [0x00, 0x00]
     
     def _write_with_basic_reader(self, text: str) -> bool:
         """Write using basic reader"""
