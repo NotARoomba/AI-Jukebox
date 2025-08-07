@@ -148,11 +148,15 @@ class NDEFReader:
                 block_data = self.reader.MFRC522_Read(block_addr)
                 if block_data:
                     all_data.extend(block_data)
+                    print(f"Block {block_addr}: {block_data[:8]}...")  # Debug output
                 else:
                     break
             except Exception as e:
                 print(f"Error reading block {block_addr}: {e}")
                 break
+        
+        print(f"Total data read: {len(all_data)} bytes")
+        print(f"Raw data (first 32 bytes): {all_data[:32]}")
         
         # Parse NDEF data
         return self.parse_ndef_data(all_data)
@@ -164,26 +168,33 @@ class NDEFReader:
         if not data or len(data) < 2:
             return records
         
+        print(f"Parsing {len(data)} bytes of data")
+        
+        # NFC Forum Type 2 format parsing
         # Look for NDEF TLV structure
         # NDEF TLV starts with 0x03 followed by length
         i = 0
         while i < len(data) - 2:
             if data[i] == 0x03:  # NDEF TLV tag
                 length = data[i + 1]
+                print(f"Found NDEF TLV at position {i}, length: {length}")
                 if i + 2 + length <= len(data):
                     ndef_payload = data[i + 2:i + 2 + length]
+                    print(f"NDEF payload: {ndef_payload[:16]}...")
                     parsed_records = self.parse_ndef_payload(ndef_payload)
                     records.extend(parsed_records)
                     i += 2 + length
                 else:
                     break
             elif data[i] == 0xFE:  # Terminator TLV
+                print(f"Found terminator TLV at position {i}")
                 break
             else:
                 i += 1
         
         # If no NDEF records found, try to parse as raw text
         if not records:
+            print("No NDEF records found, trying raw text parsing...")
             records = self.parse_raw_text(data)
         
         return records
@@ -195,13 +206,31 @@ class NDEFReader:
         if not data:
             return records
         
-        # Look for text patterns in the data
-        # Pattern 1: Look for status byte (0x02) followed by language code and text
+        print(f"Parsing raw text from {len(data)} bytes")
+        
+        # For NFC Forum Type 2, look for specific patterns
+        # Pattern 1: Look for NDEF-like structure without TLV wrapper
+        for i in range(len(data) - 4):
+            # Look for NDEF record header (0xD1 for text record with MB=1, ME=1, SR=1, TNF=1)
+            if data[i] == 0xD1:  # NDEF text record header
+                print(f"Found NDEF text record header 0xD1 at position {i}")
+                try:
+                    # Parse as NDEF record
+                    parsed_records = self.parse_ndef_payload(data[i:])
+                    if parsed_records:
+                        records.extend(parsed_records)
+                        return records
+                except Exception as e:
+                    print(f"Error parsing NDEF payload: {e}")
+        
+        # Pattern 2: Look for status byte (0x02) followed by language code and text
         for i in range(len(data) - 4):
             if data[i] == 0x02:  # Status byte for UTF-8 text
+                print(f"Found status byte 0x02 at position {i}")
                 if i + 3 < len(data):
                     # Check if next 2 bytes are language code (e.g., "en")
                     lang_code = data[i+1:i+3].decode('utf-8', errors='ignore')
+                    print(f"Language code: {lang_code}")
                     if lang_code.isalpha() and len(lang_code) == 2:
                         # Extract text after language code
                         text_start = i + 3
@@ -214,11 +243,12 @@ class NDEFReader:
                         
                         if text_end > text_start:
                             text_data = data[text_start:text_end + 1].decode('utf-8', errors='ignore')
+                            print(f"Found text: '{text_data}'")
                             if text_data.strip():
                                 records.append(NDEFRecord("text", text_data.strip(), lang_code))
                                 return records
         
-        # Pattern 2: Look for consecutive printable characters
+        # Pattern 3: Look for consecutive printable characters (fallback)
         current_text = ""
         for byte in data:
             if 32 <= byte <= 126:  # Printable ASCII
@@ -227,6 +257,7 @@ class NDEFReader:
                 break
             else:
                 if len(current_text) >= 3:  # At least 3 characters
+                    print(f"Found text pattern: '{current_text}'")
                     records.append(NDEFRecord("text", current_text.strip(), "en"))
                     current_text = ""
                 else:
@@ -234,6 +265,7 @@ class NDEFReader:
         
         # Check if we have any remaining text
         if len(current_text) >= 3:
+            print(f"Found remaining text: '{current_text}'")
             records.append(NDEFRecord("text", current_text.strip(), "en"))
         
         return records
@@ -245,6 +277,8 @@ class NDEFReader:
         if not payload or len(payload) < 3:
             return records
         
+        print(f"Parsing NDEF payload: {payload[:16]}...")
+        
         i = 0
         while i < len(payload):
             if i + 3 > len(payload):
@@ -254,10 +288,14 @@ class NDEFReader:
             header = payload[i]
             i += 1
             
+            print(f"NDEF header: 0x{header:02X}")
+            
             # Check if this is the last record
             is_last_record = (header & 0x40) != 0
             is_short_record = (header & 0x10) != 0
             tnf = header & 0x07
+            
+            print(f"  Last record: {is_last_record}, Short record: {is_short_record}, TNF: {tnf}")
             
             # Read type length
             if i >= len(payload):
@@ -283,11 +321,15 @@ class NDEFReader:
             id_length = payload[i]
             i += 1
             
+            print(f"  Type length: {type_length}, Payload length: {payload_length}, ID length: {id_length}")
+            
             # Read type
             if i + type_length > len(payload):
                 break
             record_type = payload[i:i+type_length].decode('utf-8', errors='ignore')
             i += type_length
+            
+            print(f"  Record type: {record_type}")
             
             # Read ID
             if id_length > 0:
@@ -304,6 +346,8 @@ class NDEFReader:
             record_payload = payload[i:i+payload_length]
             i += payload_length
             
+            print(f"  Payload: {record_payload[:16]}...")
+            
             # Parse payload based on type
             if record_type == "text":
                 # Text record has language code
@@ -313,14 +357,17 @@ class NDEFReader:
                     if len(record_payload) >= 1 + lang_length:
                         language = record_payload[1:1+lang_length].decode('utf-8', errors='ignore')
                         text_payload = record_payload[1+lang_length:].decode('utf-8', errors='ignore')
+                        print(f"  Found text record: '{text_payload}' (lang: {language})")
                         records.append(NDEFRecord("text", text_payload, language, record_id))
             elif record_type == "url":
                 # URL record
                 url_payload = record_payload.decode('utf-8', errors='ignore')
+                print(f"  Found URL record: '{url_payload}'")
                 records.append(NDEFRecord("url", url_payload, "", record_id))
             else:
                 # Generic record
                 generic_payload = record_payload.decode('utf-8', errors='ignore')
+                print(f"  Found generic record: '{generic_payload}'")
                 records.append(NDEFRecord(record_type, generic_payload, "", record_id))
             
             if is_last_record:
