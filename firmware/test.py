@@ -271,17 +271,34 @@ class NTAG215Tester:
             
             # Prepare write command for NTAG215
             # NTAG215 write command: 0xA2 + page_address + 4 bytes of data
+            # According to NTAG215 datasheet, the command should be:
+            # [0xA2, page_address, data0, data1, data2, data3]
             write_cmd = [0xA2, page] + data
             
             print(f"Send command: {[hex(x) for x in write_cmd]}")
+            print(f"Command bytes: {write_cmd}")
+            print(f"Command length: {len(write_cmd)}")
+            
+            # Check if the command looks correct
+            if write_cmd[0] != 0xA2:
+                print(f"Error: Invalid write command 0x{write_cmd[0]:02X}, expected 0xA2")
+                return False
+            
+            if write_cmd[1] != page:
+                print(f"Error: Page mismatch {write_cmd[1]} != {page}")
+                return False
             
             # Send the write command
             try:
+                print(f"Sending command to MFRC522_ToCard...")
                 (status, backData, backLen) = self.reader.reader.MFRC522_ToCard(
                     self.reader.reader.PCD_TRANSCEIVE, write_cmd
                 )
+                print(f"MFRC522_ToCard completed")
             except Exception as e:
                 print(f"Error calling MFRC522_ToCard: {e}")
+                import traceback
+                traceback.print_exc()
                 return False
             
             print(f"Response - status: {status}, backData: {backData}, backLen: {backLen}")
@@ -313,6 +330,29 @@ class NTAG215Tester:
                     print("  Possible cause: Tag was removed during write")
                 elif status == self.reader.reader.MI_ERR:
                     print("  Possible cause: Communication error")
+                    # Try to provide more specific debugging information
+                    print(f"  Command sent: {write_cmd}")
+                    print(f"  Command length: {len(write_cmd)}")
+                    print(f"  Page: {page}")
+                    print(f"  Data: {data}")
+                    
+                    # Try alternative approach - maybe the issue is with the command format
+                    print("  Trying alternative command format...")
+                    try:
+                        # Try sending the command in a different way
+                        alt_cmd = [0xA2, page] + data
+                        print(f"  Alternative command: {alt_cmd}")
+                        (alt_status, alt_backData, alt_backLen) = self.reader.reader.MFRC522_ToCard(
+                            self.reader.reader.PCD_TRANSCEIVE, alt_cmd
+                        )
+                        print(f"  Alternative response - status: {alt_status}, backData: {alt_backData}, backLen: {alt_backLen}")
+                        if alt_status == self.reader.reader.MI_OK and len(alt_backData) > 0:
+                            ack = alt_backData[0] & 0x0F
+                            if ack == 0x0A:
+                                print(f"  ✓ Alternative write successful!")
+                                return True
+                    except Exception as alt_e:
+                        print(f"  Alternative approach also failed: {alt_e}")
                 return False
                 
         except Exception as e:
