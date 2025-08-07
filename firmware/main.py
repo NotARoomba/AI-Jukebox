@@ -122,7 +122,7 @@ def main():
                     continue
                 song_name = text[2:].strip()
                 print(f"Playing Minecraft song: {song_name}")
-                play_audio_url(f"files/minecraft/{song_name}.mp3")
+                play_audio_url(f"audio/{song_name}.mp3")
             elif text.startswith('a_'):
                 if last_id == id:
                     # print("Already playing AI generated song.")
