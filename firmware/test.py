@@ -2,18 +2,21 @@
 
 """
 NFC Card Reader Test Script
-Uses the MFRC522 library from the rfid folder.
+Uses the MFRC522 library from the mfrc522_new folder.
 """
 
 import time
 import sys
 import os
 
+# Add the mfrc522_new folder to the path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'mfrc522_new'))
+
 try:
-    from .mfrc522_new.mfrc522_new import MFRC522, StatusCode, PICC_Type
+    from mfrc522_new import MFRC522, StatusCode, PICC_Type
 except ImportError as e:
     print(f"Error importing MFRC522 library: {e}")
-    print("Make sure the mfrc522.py file exists in the rfid folder.")
+    print("Make sure the mfrc522_new.py file exists in the mfrc522_new folder.")
     sys.exit(1)
 
 try:
