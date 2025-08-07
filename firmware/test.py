@@ -38,13 +38,29 @@ def write_string_to_card(reader, uid, text):
         text_length = len(text_bytes)
         print(f"Text length: {text_length} bytes")
         
-        # Build NDEF TLV in a bytearray buffer
-        # TLV: 03 LL D1 01 0C PL 65 6E [text...] FE
-        buffer = bytearray()
-        ndef_len = 1 + 1 + 1 + 1 + 2 + text_length  # D1 01 0C PL 65 6E + text
-        buffer += bytes([0x03, ndef_len, 0xD1, 0x01, 0x0C, text_length, 0x65, 0x6E])
-        buffer += text_bytes
-        buffer += bytes([0xFE])
+        # Build a proper NDEF Text record inside an NDEF TLV
+        # NDEF Text record (short record):
+        #   D1 | 01 | PL | 54 | SR | lang('en') | text
+        #   - D1: MB|ME|SR set, TNF=0x01 (well-known)
+        #   - 01: type length = 1 (type 'T')
+        #   - PL: payload length = 1 (status) + len(lang) + len(text)
+        #   - 54: 'T'
+        #   - SR: status: bit7=0 (UTF-8), bits[5:0]=len(lang)
+        lang = 'en'
+        lang_bytes = lang.encode('ascii')
+        status_byte = len(lang_bytes) & 0x3F  # UTF-8
+        payload_len = 1 + len(lang_bytes) + text_length
+
+        ndef_msg = bytearray([0xD1, 0x01, payload_len, 0x54, status_byte])
+        ndef_msg += lang_bytes
+        ndef_msg += text_bytes
+
+        # TLV wrapper: 0x03, length, then NDEF message, terminated by 0xFE
+        # For our small payloads we can use the short TLV length (1 byte)
+        tlv_len = len(ndef_msg)
+        buffer = bytearray([0x03, tlv_len])
+        buffer += ndef_msg
+        buffer += b"\xFE"
         
         # Pad to 4-byte boundary
         while len(buffer) % 4 != 0:
@@ -147,47 +163,61 @@ def read_string_from_card(reader, uid):
             print("✗ NDEF is empty")
             return None
         
-        # Look for text record
-        text_start = -1
-        for i in range(ndef_start + 2, min(ndef_start + 2 + ndef_length, len(all_data) - 1)):
-            if all_data[i] == 0xD1 and i + 1 < len(all_data) and all_data[i + 1] == 0x01:
-                text_start = i
-                break
-        
-        if text_start == -1:
-            print("✗ No text record found")
+        # Find the start of the embedded NDEF message after the TLV
+        tlv_len = ndef_length
+        tlv_data_idx = ndef_start + 2
+        if ndef_length == 0xFF and (ndef_start + 3) < len(all_data):
+            # Long-form length: next two bytes are length (big-endian per NDEF spec)
+            if ndef_start + 3 < len(all_data):
+                tlv_len = (all_data[ndef_start + 2] << 8) | all_data[ndef_start + 3]
+                tlv_data_idx = ndef_start + 4
+
+        # Basic bounds check
+        if tlv_data_idx + tlv_len > len(all_data):
+            tlv_len = max(0, len(all_data) - tlv_data_idx)
+
+        # Parse NDEF record (expecting a single short Text record)
+        if tlv_len < 5 or tlv_data_idx + 5 > len(all_data):
+            print("✗ NDEF record too short")
             return None
-        
-        print(f"Found text record at position {text_start}")
-        
-        # Extract text length
-        if text_start + 5 >= len(all_data):
-            print("✗ Insufficient data for text length")
+
+        rec_header = all_data[tlv_data_idx]
+        type_len = all_data[tlv_data_idx + 1]
+        payload_len = all_data[tlv_data_idx + 2]
+        if type_len != 1:
+            print("✗ Unsupported type length")
             return None
-        
-        text_length = all_data[text_start + 5]
-        print(f"Text length: {text_length}")
-        
-        if text_length == 0 or text_length > 1000:
-            print("✗ Invalid text length")
+        if tlv_data_idx + 3 + type_len + payload_len > len(all_data):
+            print("✗ NDEF record length out of bounds")
             return None
-        
-        # Extract text data
-        text_bytes = bytearray()
-        text_data_start = text_start + 8  # Skip header and language code
-        
-        for i in range(text_data_start, min(text_data_start + text_length, len(all_data))):
-            if all_data[i] != 0 and all_data[i] != 0xFE:
-                text_bytes.append(all_data[i])
-                if len(text_bytes) >= text_length:
-                    break
+
+        rec_type = all_data[tlv_data_idx + 3]
+        if rec_type != 0x54:  # 'T'
+            print("✗ Not a text (T) record")
+            return None
+
+        payload_idx = tlv_data_idx + 3 + type_len
+        status = all_data[payload_idx]
+        lang_len = status & 0x3F
+        is_utf16 = (status & 0x80) != 0
+        text_idx = payload_idx + 1 + lang_len
+        text_len = payload_len - 1 - lang_len
+        if text_len <= 0:
+            print("✗ Empty text payload")
+            return None
+        if text_idx + text_len > len(all_data):
+            print("✗ Text payload out of bounds")
+            return None
+
+        # Extract text bytes exactly
+        text_bytes = bytes(all_data[text_idx:text_idx + text_len])
         
         if not text_bytes:
             print("✗ No text data found")
             return None
         
         try:
-            text = text_bytes.decode('utf-8')
+            text = text_bytes.decode('utf-16' if is_utf16 else 'utf-8')
             return text
         except UnicodeDecodeError as e:
             print(f"✗ Failed to decode text: {e}")
