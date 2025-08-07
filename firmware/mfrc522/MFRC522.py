@@ -385,7 +385,9 @@ class MFRC522:
         if len(data) != 4:
             return self.ERR
         
+        # NTAG/Ultralight commands require CRC appended when using MFRC522
         buf = [0xA2, page] + list(data)
+        buf += self._crc(buf)
         if self.DEBUG:
             print(f"[DEBUG] writeNTAGPage page={page} frame=[{self._hex(buf)}]")
         (stat, recv, bits) = self._tocard(0x0C, buf)
@@ -435,6 +437,8 @@ class MFRC522:
         # Add the data (16 bytes)
         for i in range(16):
             buf.append(data[i])
+        # Append CRC for MFRC522
+        buf += self._crc(buf)
         
         # Send the command
         (stat, recv, bits) = self._tocard(0x0C, buf)
@@ -474,6 +478,7 @@ class MFRC522:
             buf.append(data[i])
         
         # Send the command using the standard _tocard method
+        buf += self._crc(buf)
         (stat, recv, bits) = self._tocard(0x0C, buf)
         
         # For NTAG cards, if we get here without an error, consider it successful
