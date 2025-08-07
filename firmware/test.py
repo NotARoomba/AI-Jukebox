@@ -138,28 +138,49 @@ class RC522:
         self.pin_rst = pin_rst
         self.pin_ce = pin_ce
         
-        # Initialize SPI
-        self.spi = spidev.SpiDev()
-        self.spi.open(bus, device)
-        self.spi.max_speed_hz = speed
-        
-        # Initialize GPIO
+        # Initialize GPIO first
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(pin_rst, GPIO.OUT)
         GPIO.setup(pin_ce, GPIO.OUT)
         
-        # Reset RC522
+        # Hardware reset RC522 using reset pin
+        print(f"Performing hardware reset using RST pin (GPIO {pin_rst})...")
         GPIO.output(pin_rst, GPIO.LOW)
         time.sleep(0.1)
         GPIO.output(pin_rst, GPIO.HIGH)
         time.sleep(0.1)
+        
+        # Initialize SPI
+        try:
+            self.spi = spidev.SpiDev()
+            self.spi.open(bus, device)
+            self.spi.max_speed_hz = speed
+            self.spi.mode = 0
+            print("✓ SPI initialized successfully")
+        except Exception as e:
+            print(f"Failed to initialize SPI: {e}")
+            raise
         
         # Initialize RC522
         self.init()
     
     def init(self):
         """Initialize RC522"""
-        self.reset()
+        print("Initializing RC522...")
+        
+        # Perform hardware reset first
+        self.hardware_reset()
+        time.sleep(0.1)
+        
+        # Check if RC522 is responding
+        version = self.read_register(VersionReg)
+        print(f"RC522 Version: 0x{version:02X}")
+        
+        if version == 0x00 or version == 0xFF:
+            print("Warning: RC522 not responding properly. Check wiring and power.")
+            print("  - Verify RST pin (GPIO 22) is connected")
+            print("  - Check 3.3V power supply")
+            print("  - Ensure all SPI connections are correct")
         
         # Set timer
         self.write_register(TModeReg, 0x8D)
@@ -171,10 +192,25 @@ class RC522:
         
         # Turn antenna on
         self.antenna_on()
+        print("RC522 initialization complete")
+    
+    def hardware_reset(self):
+        """Perform hardware reset using RST pin"""
+        print(f"Hardware reset using RST pin (GPIO {self.pin_rst})...")
+        GPIO.output(self.pin_rst, GPIO.LOW)
+        time.sleep(0.1)
+        GPIO.output(self.pin_rst, GPIO.HIGH)
+        time.sleep(0.1)
+        print("✓ Hardware reset completed")
     
     def reset(self):
-        """Reset RC522"""
+        """Reset RC522 using both hardware and software reset"""
+        # Hardware reset first
+        self.hardware_reset()
+        
+        # Software reset
         self.write_register(CommandReg, PCD_RESETPHASE)
+        time.sleep(0.1)
     
     def write_register(self, address, value):
         """Write to RC522 register"""
@@ -421,7 +457,8 @@ class RC522:
     
     def close(self):
         """Close SPI connection"""
-        self.spi.close()
+        if hasattr(self, 'spi'):
+            self.spi.close()
         GPIO.cleanup()
 
 def main():
@@ -434,7 +471,13 @@ def main():
     print("- MISO -> GPIO 21 (MISO)")
     print("- GND -> GND")
     print("- VCC -> 3.3V")
-    print("- RST -> GPIO 22")
+    print("- RST -> GPIO 22 (Hardware Reset)")
+    print("")
+    print("Initialization process:")
+    print("1. Hardware reset using RST pin (GPIO 22)")
+    print("2. SPI initialization")
+    print("3. RC522 configuration")
+    print("4. Antenna activation")
     print("")
     print("Place an NFC card on the reader...")
     print("Press Ctrl+C to exit")
@@ -442,45 +485,67 @@ def main():
     
     try:
         # Initialize RC522 with updated pins
+        print("Initializing RC522...")
         reader = RC522(pin_rst=22, pin_ce=24)
         print("✓ RC522 initialized successfully with updated pin configuration")
+        print("✓ Hardware reset pin (GPIO 22) configured and tested")
         
+        last_uid = None
         while True:
-            # Request card
-            (status, tag_type) = reader.request(PICC_REQIDL)
-            if status == 0:
-                print("✓ Card detected!")
-                
-                # Anticollision
-                (status, uid) = reader.anticoll()
+            try:
+                # Request card
+                (status, tag_type) = reader.request(PICC_REQIDL)
                 if status == 0:
-                    # Convert UID to hex string
-                    uid_hex = ''.join([f'{b:02X}' for b in uid[:4]])
-                    print(f"Card UID: {uid_hex}")
+                    print("✓ Card detected!")
                     
-                    # Select card
-                    if reader.select_tag(uid) == 0:
-                        print("✓ Card selected successfully")
+                    # Anticollision
+                    (status, uid) = reader.anticoll()
+                    if status == 0:
+                        # Convert UID to hex string
+                        uid_hex = ''.join([f'{b:02X}' for b in uid[:4]])
                         
-                        # Read first block (block 0)
-                        (status, data) = reader.read(0)
-                        if status == 0:
-                            print("Block 0 data:", ' '.join([f'{b:02X}' for b in data]))
+                        # Check if it's the same card
+                        if last_uid == uid_hex:
+                            time.sleep(0.5)
+                            continue
+                        
+                        print(f"Card UID: {uid_hex}")
+                        last_uid = uid_hex
+                        
+                        # Select card
+                        if reader.select_tag(uid) == 0:
+                            print("✓ Card selected successfully")
+                            
+                            # Read first block (block 0)
+                            (status, data) = reader.read(0)
+                            if status == 0:
+                                print("Block 0 data:", ' '.join([f'{b:02X}' for b in data]))
+                            else:
+                                print("✗ Failed to read block 0")
                         else:
-                            print("✗ Failed to read block 0")
-                    else:
-                        print("✗ Failed to select card")
+                            print("✗ Failed to select card")
+                    
+                    # Halt card
+                    reader.halt()
+                    print("-" * 50)
+                else:
+                    # No card detected, reset last_uid after a delay
+                    if last_uid is not None:
+                        time.sleep(1)
+                        last_uid = None
                 
-                # Halt card
-                reader.halt()
-                print("-" * 50)
-            
-            time.sleep(1)
+                time.sleep(0.1)
+                
+            except Exception as e:
+                print(f"Error during card detection: {e}")
+                time.sleep(1)
     
     except KeyboardInterrupt:
         print("\nExiting...")
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         if 'reader' in locals():
             reader.close()
