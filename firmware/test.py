@@ -41,7 +41,7 @@ def write_string_to_card(reader, uid, text):
         print(f"Text length: {text_length} bytes")
         
         # Prepare NDEF data
-        # Block 4: NDEF TLV structure
+        # Block 5: NDEF TLV structure
         # 03 = NDEF TLV tag
         # Length byte will be calculated
         # D1 = NDEF record header (text record)
@@ -57,45 +57,45 @@ def write_string_to_card(reader, uid, text):
         
         print(f"NDEF length: {ndef_length}")
         
-        # Prepare block 4 data (exactly 16 bytes)
-        block4 = [0] * 16  # Initialize with zeros
-        block4[0] = 0x03  # NDEF TLV tag
-        block4[1] = ndef_length  # NDEF length
-        block4[2] = 0xD1  # NDEF record header (text record)
-        block4[3] = 0x01  # NDEF record type
-        block4[4] = 0x0C  # Text record type length
-        block4[5] = text_length  # Text record payload length
-        block4[6] = 0x65  # 'e' (language code)
-        block4[7] = 0x6E  # 'n' (language code)
+        # Prepare block 5 data (exactly 16 bytes)
+        block5 = [0] * 16  # Initialize with zeros
+        block5[0] = 0x03  # NDEF TLV tag
+        block5[1] = ndef_length  # NDEF length
+        block5[2] = 0xD1  # NDEF record header (text record)
+        block5[3] = 0x01  # NDEF record type
+        block5[4] = 0x0C  # Text record type length
+        block5[5] = text_length  # Text record payload length
+        block5[6] = 0x65  # 'e' (language code)
+        block5[7] = 0x6E  # 'n' (language code)
         
-        # Copy text data to block 4 (max 8 bytes)
+        # Copy text data to block 5 (max 8 bytes)
         for i, byte in enumerate(text_bytes[:8]):
-            block4[i + 8] = byte
+            block5[i + 8] = byte
         
-        print(f"Block 4 data: {' '.join([f'{b:02X}' for b in block4])}")
+        print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
         
         # Use standard write method (like MicroPython implementation)
-        print("Writing block 4...")
-        if reader.write(4, block4) == reader.OK:
-            print("✓ Successfully wrote block 4")
+        print("Writing block 5...")
+        if reader.write(5, block5) == reader.OK:
+            print("✓ Successfully wrote block 5")
         else:
-            print("✗ Failed to write block 4")
+            print("✗ Failed to write block 5")
             return False
         
-        # If text is longer than 8 bytes, write to block 5
+        # If text is longer than 8 bytes, write to block 6
         if text_length > 8:
-            block5 = [0] * 16  # Initialize with zeros
+            block6 = [0] * 16  # Initialize with zeros
             remaining_text = text_bytes[8:]
             for i, byte in enumerate(remaining_text[:16]):  # Limit to 16 bytes
-                block5[i] = byte
+                block6[i] = byte
             
-            print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
+            print(f"Block 6 data: {' '.join([f'{b:02X}' for b in block6])}")
             
-            print("Writing block 5...")
-            if reader.write(5, block5) == reader.OK:
-                print("✓ Successfully wrote block 5")
+            print("Writing block 6...")
+            if reader.write(6, block6) == reader.OK:
+                print("✓ Successfully wrote block 6")
             else:
-                print("✗ Failed to write block 5")
+                print("✗ Failed to write block 6")
                 return False
         
         # Write terminator TLV
@@ -103,7 +103,7 @@ def write_string_to_card(reader, uid, text):
         block_terminator[0] = 0xFE  # Terminator TLV
         
         # Find the next available block
-        next_block = 6 if text_length > 8 else 5
+        next_block = 7 if text_length > 8 else 6
         print(f"Writing terminator to block {next_block}...")
         if reader.write(next_block, block_terminator) == reader.OK:
             print("✓ Successfully wrote terminator")
@@ -136,21 +136,21 @@ def read_string_from_card(reader, uid):
         
         print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
         
-        # Read block 4 (NDEF data) using standard read method
-        stat, block4 = reader.read(4)
-        if stat != reader.OK or not block4 or len(block4) < 8:
-            print("✗ Failed to read block 4 or insufficient data")
+        # Read block 5 (NDEF data) using standard read method
+        stat, block5 = reader.read(5)
+        if stat != reader.OK or not block5 or len(block5) < 8:
+            print("✗ Failed to read block 5 or insufficient data")
             return None
         
-        print(f"Block 4: {' '.join([f'{b:02X}' for b in block4])}")
+        print(f"Block 5: {' '.join([f'{b:02X}' for b in block5])}")
         
         # Check if it's NDEF data
-        if block4[0] != 0x03:
+        if block5[0] != 0x03:
             print("✗ Not NDEF data")
             return None
         
         # Get NDEF length
-        ndef_length = block4[1]
+        ndef_length = block5[1]
         print(f"NDEF length: {ndef_length}")
         
         # Check if NDEF is empty
@@ -159,16 +159,16 @@ def read_string_from_card(reader, uid):
             return None
         
         # Check if it's a text record
-        if block4[2] != 0xD1:
+        if block5[2] != 0xD1:
             print("✗ Not a text record")
             return None
         
         # Get text length (safely) - this is the payload length
-        if len(block4) < 6:
-            print("✗ Insufficient data in block 4")
+        if len(block5) < 6:
+            print("✗ Insufficient data in block 5")
             return None
         
-        text_length = block4[5]
+        text_length = block5[5]
         print(f"Text length: {text_length}")
         
         # Check if text length is valid
@@ -180,18 +180,18 @@ def read_string_from_card(reader, uid):
         text_bytes = bytearray()
         start_pos = 8  # Start after language code (2 bytes)
         
-        # Read from block 4 (only the text part, not the full block)
+        # Read from block 5 (only the text part, not the full block)
         bytes_read = 0
-        for i in range(start_pos, min(start_pos + text_length, len(block4))):
-            if block4[i] != 0 and block4[i] != 0xFE:  # Skip null bytes and terminator
-                text_bytes.append(block4[i])
+        for i in range(start_pos, min(start_pos + text_length, len(block5))):
+            if block5[i] != 0 and block5[i] != 0xFE:  # Skip null bytes and terminator
+                text_bytes.append(block5[i])
                 bytes_read += 1
                 if bytes_read >= text_length:
                     break
         
         # Calculate how many more blocks we need to read
         remaining_length = text_length - bytes_read
-        current_block = 5
+        current_block = 6
         
         while remaining_length > 0 and current_block <= reader.NTAG_MaxPage:
             stat, block = reader.read(current_block)
