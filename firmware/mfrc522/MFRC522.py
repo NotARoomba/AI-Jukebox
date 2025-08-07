@@ -401,8 +401,11 @@ class MFRC522:
                 # Some NTAG cards might not return data but still succeed
                 return self.OK
             else:
+                # Print debug info
+                print(f"NTAG write response: {[f'{b:02X}' for b in recv] if recv else 'None'}")
                 return self.ERR
         else:
+            print(f"NTAG write failed: status={stat}, bits={bits}")
             return self.ERR
         
     def getNTAGVersion(self):
@@ -438,7 +441,7 @@ class MFRC522:
                 self.NTAG = self.NTAG_215
                 self.NTAG_MaxPage = 134                  
                 return True
-            if rcv[7] == 0x13:
+            if rcv[6] == 0x13:
                 self.NTAG = self.NTAG_216
                 self.NTAG_MaxPage = 230                  
                 return True

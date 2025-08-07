@@ -74,9 +74,9 @@ def write_string_to_card(reader, uid, text):
         
         print(f"Block 4 data: {' '.join([f'{b:02X}' for b in block4])}")
         
-        # Use NTAG write method for 16-byte blocks
+        # Use standard write method (like MicroPython implementation)
         print("Writing block 4...")
-        if reader.writeNTAGBlock(4, block4) == reader.OK:
+        if reader.write(4, block4) == reader.OK:
             print("✓ Successfully wrote block 4")
         else:
             print("✗ Failed to write block 4")
@@ -92,7 +92,7 @@ def write_string_to_card(reader, uid, text):
             print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
             
             print("Writing block 5...")
-            if reader.writeNTAGBlock(5, block5) == reader.OK:
+            if reader.write(5, block5) == reader.OK:
                 print("✓ Successfully wrote block 5")
             else:
                 print("✗ Failed to write block 5")
@@ -105,7 +105,7 @@ def write_string_to_card(reader, uid, text):
         # Find the next available block
         next_block = 6 if text_length > 8 else 5
         print(f"Writing terminator to block {next_block}...")
-        if reader.writeNTAGBlock(next_block, block_terminator) == reader.OK:
+        if reader.write(next_block, block_terminator) == reader.OK:
             print("✓ Successfully wrote terminator")
         else:
             print("✗ Failed to write terminator")
@@ -128,12 +128,16 @@ def read_string_from_card(reader, uid):
         # Check if it's an NTAG card
         if not reader.IsNTAG():
             print("✗ Card is not an NTAG card")
+            # Try to get NTAG version anyway for debugging
+            stat, rcv = reader.getNTAGVersion()
+            if stat == reader.OK:
+                print(f"NTAG version response: {[f'{b:02X}' for b in rcv]}")
             return None
         
         print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
         
-        # Read block 4 (NDEF data) using NTAG read method
-        stat, block4 = reader.readNTAGBlock(4)
+        # Read block 4 (NDEF data) using standard read method
+        stat, block4 = reader.read(4)
         if stat != reader.OK or not block4 or len(block4) < 8:
             print("✗ Failed to read block 4 or insufficient data")
             return None
@@ -154,7 +158,7 @@ def read_string_from_card(reader, uid):
             print("✗ Not a text record")
             return None
         
-        # Get text length (safely)
+        # Get text length (safely) - this is the payload length
         if len(block4) < 6:
             print("✗ Insufficient data in block 4")
             return None
@@ -162,20 +166,30 @@ def read_string_from_card(reader, uid):
         text_length = block4[5]
         print(f"Text length: {text_length}")
         
-        # Extract text from block 4 (starting from position 8)
+        # Extract text from all blocks
         text_bytes = bytearray()
-        for i in range(8, min(8 + text_length, len(block4))):
+        start_pos = 8  # Start after language code (2 bytes)
+        
+        # Read from block 4
+        for i in range(start_pos, min(start_pos + text_length, len(block4))):
             if block4[i] != 0:
                 text_bytes.append(block4[i])
         
-        # If text continues in block 5
-        if text_length > 8:
-            stat, block5 = reader.readNTAGBlock(5)
-            if stat == reader.OK and block5 and len(block5) >= min(text_length - 8, 16):
-                print(f"Block 5: {' '.join([f'{b:02X}' for b in block5])}")
-                for i in range(min(text_length - 8, len(block5))):
-                    if block5[i] != 0:
-                        text_bytes.append(block5[i])
+        # Calculate how many more blocks we need to read
+        remaining_length = text_length - (len(block4) - start_pos)
+        current_block = 5
+        
+        while remaining_length > 0 and current_block <= reader.NTAG_MaxPage:
+            stat, block = reader.read(current_block)
+            if stat == reader.OK and block and len(block) > 0:
+                print(f"Block {current_block}: {' '.join([f'{b:02X}' for b in block])}")
+                for i in range(min(remaining_length, len(block))):
+                    if block[i] != 0:
+                        text_bytes.append(block[i])
+                remaining_length -= len(block)
+                current_block += 1
+            else:
+                break
         
         if not text_bytes:
             print("✗ No text data found")
@@ -184,9 +198,15 @@ def read_string_from_card(reader, uid):
         try:
             text = text_bytes.decode('utf-8')
             return text
-        except UnicodeDecodeError:
-            print("✗ Failed to decode text")
-            return None
+        except UnicodeDecodeError as e:
+            print(f"✗ Failed to decode text: {e}")
+            print(f"Raw bytes: {[f'{b:02X}' for b in text_bytes]}")
+            # Try to decode as much as possible
+            try:
+                text = text_bytes.decode('utf-8', errors='ignore')
+                return text
+            except:
+                return None
             
     except Exception as e:
         print(f"Error in read_string_from_card: {e}")
