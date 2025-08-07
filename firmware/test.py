@@ -182,6 +182,60 @@ class NDEFReader:
             else:
                 i += 1
         
+        # If no NDEF records found, try to parse as raw text
+        if not records:
+            records = self.parse_raw_text(data)
+        
+        return records
+    
+    def parse_raw_text(self, data: bytes) -> List[NDEFRecord]:
+        """Parse raw data as text records"""
+        records = []
+        
+        if not data:
+            return records
+        
+        # Look for text patterns in the data
+        # Pattern 1: Look for status byte (0x02) followed by language code and text
+        for i in range(len(data) - 4):
+            if data[i] == 0x02:  # Status byte for UTF-8 text
+                if i + 3 < len(data):
+                    # Check if next 2 bytes are language code (e.g., "en")
+                    lang_code = data[i+1:i+3].decode('utf-8', errors='ignore')
+                    if lang_code.isalpha() and len(lang_code) == 2:
+                        # Extract text after language code
+                        text_start = i + 3
+                        text_end = text_start
+                        for j in range(text_start, len(data)):
+                            if 32 <= data[j] <= 126:  # Printable ASCII
+                                text_end = j
+                            else:
+                                break
+                        
+                        if text_end > text_start:
+                            text_data = data[text_start:text_end + 1].decode('utf-8', errors='ignore')
+                            if text_data.strip():
+                                records.append(NDEFRecord("text", text_data.strip(), lang_code))
+                                return records
+        
+        # Pattern 2: Look for consecutive printable characters
+        current_text = ""
+        for byte in data:
+            if 32 <= byte <= 126:  # Printable ASCII
+                current_text += chr(byte)
+            elif byte == 0:  # Null terminator
+                break
+            else:
+                if len(current_text) >= 3:  # At least 3 characters
+                    records.append(NDEFRecord("text", current_text.strip(), "en"))
+                    current_text = ""
+                else:
+                    current_text = ""
+        
+        # Check if we have any remaining text
+        if len(current_text) >= 3:
+            records.append(NDEFRecord("text", current_text.strip(), "en"))
+        
         return records
     
     def parse_ndef_payload(self, payload: bytes) -> List[NDEFRecord]:
@@ -282,6 +336,7 @@ class NDEFReader:
         # Select the tag
         status = self.reader.MFRC522_SelectTag(uid)
         if status != self.reader.MI_OK:
+            print("Failed to select tag")
             return False
         
         # Create NDEF message
@@ -310,9 +365,11 @@ class NDEFReader:
                 if len(block_data) < 16:
                     block_data.extend([0] * (16 - len(block_data)))
                 
-                # Write the block
+                # Write the block - MFRC522_Write doesn't return a status, so we need to handle errors differently
                 try:
-                    self.reader.MFRC522_Write(block_addr, block_data)
+                    # Convert to list for MFRC522_Write
+                    block_list = list(block_data)
+                    self.reader.MFRC522_Write(block_addr, block_list)
                     print(f"Wrote block {block_addr}: {block_data[:8]}...")
                 except Exception as e:
                     print(f"Failed to write block {block_addr}: {e}")
