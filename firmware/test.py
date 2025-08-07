@@ -13,7 +13,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'rfid'))
 
 try:
-    from mfrc522 import MFRC522, StatusCode, PICC_Type
+    from .mfrc522.mfrc522 import MFRC522, StatusCode, PICC_Type
 except ImportError as e:
     print(f"Error importing MFRC522 library: {e}")
     print("Make sure the mfrc522.py file exists in the rfid folder.")
