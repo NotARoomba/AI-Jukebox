@@ -78,12 +78,28 @@ def create_player(audio_url):
     player = vlc.MediaPlayer(audio_url)
     player.play()
     try:
-        # Give VLC a moment to initialize, then set player volume to full (relative to system)
+        # Give VLC a moment to initialize, then set player volume to 0 for fade-in
         time.sleep(0.05)
-        player.audio_set_volume(100)
+        player.audio_set_volume(0)  # Start at 0 for fade-in
     except Exception:
         pass
     return player
+
+def fade_in(player, fade_ms=800, steps=16):
+    if player is None:
+        return
+    try:
+        target = 100
+        step = max(1, target // steps)
+        delay = max(0.0, (fade_ms / 1000.0) / max(1, (target // step)))
+        vol = 0
+        while vol < target:
+            player.audio_set_volume(vol)
+            time.sleep(delay)
+            vol += step
+        player.audio_set_volume(target)
+    except Exception:
+        pass
 
 def fade_out_and_stop(player, fade_ms=800, steps=16):
     if player is None:
@@ -276,6 +292,8 @@ def main():
                         print(f"Playing Minecraft: {song_data}")
                         player = create_player(audio_path)
                         current_track_url = audio_path if player else None
+                        if player is not None:
+                            fade_in(player)
                         last_tag_text = text
                 elif song_type == 'ai':
                     mask = song_data
@@ -321,6 +339,8 @@ def main():
                             # Start first
                             player = create_player(playlist[0])
                             current_track_url = playlist[0]
+                            if player is not None:
+                                fade_in(player)
                             # Keep remaining for later
                             playlist = playlist[1:]
                             last_tag_text = text
@@ -342,6 +362,8 @@ def main():
                             next_url = playlist.pop(0)
                             player = create_player(next_url)
                             current_track_url = next_url
+                            if player is not None:
+                                fade_in(player)
 
             time.sleep(0.1)
     except KeyboardInterrupt:
