@@ -4,8 +4,8 @@ import os
 import RPi.GPIO as GPIO
 
 PIN_PLAY_PAUSE = 17
-PIN_REWIND = 27
-PIN_FORWARD = 22
+PIN_REWIND     = 27
+PIN_FORWARD    = 22
 
 
 GPIO.setmode(GPIO.BCM)
@@ -55,12 +55,12 @@ def play_audio_url(audio_url):
                 print("Rewind 10s")
                 time.sleep(0.3)  # debounce
 
-            if GPIO.input(PIN_FORWARD) == GPIO.HIGH:
-                current_time = player.get_time()
-                length = player.get_length()
-                player.set_time(min(current_time + 10000, length))
-                print("Forward 10s")
-                time.sleep(0.3)  # debounce
+            # if GPIO.input(PIN_FORWARD) == GPIO.HIGH:
+            #     current_time = player.get_time()
+            #     length = player.get_length()
+            #     player.set_time(min(current_time + 10000, length))
+            #     print("Forward 10s")
+            #     time.sleep(0.3)  # debounce
 
             time.sleep(0.1)
     finally:
