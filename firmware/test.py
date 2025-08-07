@@ -1,57 +1,51 @@
 #!/usr/bin/env python3
+# -*- coding: utf8 -*-
 
-"""
-NFC Card Reader Test Script
-Uses the old MFRC522 library from the mfrc522 folder.
-"""
-
+import RPi.GPIO as GPIO
+import signal
 import time
 import sys
-import os
 import argparse
+from mfrc522 import MFRC522
 
-# Add the mfrc522 folder to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'mfrc522'))
+# Constants
+DEFAULT_VOLUME = 80
 
-try:
-    from mfrc522 import MFRC522
-except ImportError as e:
-    print(f"Error importing MFRC522 library: {e}")
-    print("Make sure the MFRC522.py file exists in the mfrc522 folder.")
-    sys.exit(1)
-
-try:
-    import RPi.GPIO as GPIO
-except ImportError:
-    print("Error: RPi.GPIO not found")
-    print("Install with: sudo apt-get install python3-rpi.gpio")
-    sys.exit(1)
-
-try:
-    import spidev
-except ImportError:
-    print("Error: spidev not found")
-    print("Install with: sudo apt-get install python3-spidev")
-    sys.exit(1)
-
+def signal_handler(sig, frame):
+    print('\nCleaning up GPIO...')
+    GPIO.cleanup()
+    print('Done!')
+    sys.exit(0)
 
 def write_string_to_card(reader, uid, text):
-    """Write a string to the NFC card"""
+    """Write a string to the NFC card using NTAG methods"""
     print(f"Writing '{text}' to card...")
     
     try:
+        # Check if it's an NTAG card
+        print("Checking if card is NTAG...")
+        if not reader.IsNTAG():
+            print("✗ Card is not an NTAG card")
+            # Try to get NTAG version anyway for debugging
+            stat, rcv = reader.getNTAGVersion()
+            if stat == reader.OK:
+                print(f"NTAG version response: {[f'{b:02X}' for b in rcv]}")
+            return False
+        
+        print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
+        
         # Convert text to bytes
         text_bytes = text.encode('utf-8')
         text_length = len(text_bytes)
         
         print(f"Text length: {text_length} bytes")
         
-        # Prepare data for writing (16 bytes per block)
+        # Prepare NDEF data
         # Block 4: NDEF TLV structure
         # 03 = NDEF TLV tag
         # Length byte will be calculated
         # D1 = NDEF record header (text record)
-        # 01 = NDEF record length
+        # 01 = NDEF record type
         # 0C = text record type length
         # 02 = text record payload length
         # 65 = 'e' (language code)
@@ -80,8 +74,9 @@ def write_string_to_card(reader, uid, text):
         
         print(f"Block 4 data: {' '.join([f'{b:02X}' for b in block4])}")
         
-        # Use NTAG write method
-        if reader.NTAG_Write(4, block4) == reader.MI_OK:
+        # Use NTAG write method for 16-byte blocks
+        print("Writing block 4...")
+        if reader.writeNTAGBlock(4, block4) == reader.OK:
             print("✓ Successfully wrote block 4")
         else:
             print("✗ Failed to write block 4")
@@ -96,7 +91,8 @@ def write_string_to_card(reader, uid, text):
             
             print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
             
-            if reader.NTAG_Write(5, block5) == reader.MI_OK:
+            print("Writing block 5...")
+            if reader.writeNTAGBlock(5, block5) == reader.OK:
                 print("✓ Successfully wrote block 5")
             else:
                 print("✗ Failed to write block 5")
@@ -108,7 +104,8 @@ def write_string_to_card(reader, uid, text):
         
         # Find the next available block
         next_block = 6 if text_length > 8 else 5
-        if reader.NTAG_Write(next_block, block_terminator) == reader.MI_OK:
+        print(f"Writing terminator to block {next_block}...")
+        if reader.writeNTAGBlock(next_block, block_terminator) == reader.OK:
             print("✓ Successfully wrote terminator")
         else:
             print("✗ Failed to write terminator")
@@ -124,13 +121,20 @@ def write_string_to_card(reader, uid, text):
 
 
 def read_string_from_card(reader, uid):
-    """Read a string from the NFC card"""
+    """Read a string from the NFC card using NTAG methods"""
     print("Reading data from card...")
     
     try:
+        # Check if it's an NTAG card
+        if not reader.IsNTAG():
+            print("✗ Card is not an NTAG card")
+            return None
+        
+        print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
+        
         # Read block 4 (NDEF data) using NTAG read method
-        block4 = reader.NTAG_Read(4)
-        if not block4 or len(block4) < 8:
+        stat, block4 = reader.readNTAGBlock(4)
+        if stat != reader.OK or not block4 or len(block4) < 8:
             print("✗ Failed to read block 4 or insufficient data")
             return None
         
@@ -166,8 +170,8 @@ def read_string_from_card(reader, uid):
         
         # If text continues in block 5
         if text_length > 8:
-            block5 = reader.NTAG_Read(5)
-            if block5 and len(block5) >= min(text_length - 8, 16):
+            stat, block5 = reader.readNTAGBlock(5)
+            if stat == reader.OK and block5 and len(block5) >= min(text_length - 8, 16):
                 print(f"Block 5: {' '.join([f'{b:02X}' for b in block5])}")
                 for i in range(min(text_length - 8, len(block5))):
                     if block5[i] != 0:
@@ -192,90 +196,67 @@ def read_string_from_card(reader, uid):
 
 
 def main():
-    """Main function"""
     parser = argparse.ArgumentParser(description='NFC Card Reader/Writer')
-    parser.add_argument('-w', '--write', type=str, help='String to write to the NFC card')
+    parser.add_argument('-w', '--write', type=str, help='String to write to the card')
     args = parser.parse_args()
-    
-    if args.write:
-        print(f"Write mode enabled. Will write: '{args.write}'")
-    else:
-        print("Read-only mode enabled.")
-    
-    print("Place an NFC card on the reader...")
-    print("Press Ctrl+C to exit")
-    
+
+    # Set up signal handler for clean exit
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Initialize MFRC522
+    print("Initializing MFRC522...")
+    reader = MFRC522(bus=0, device=0, spd=1000000, pin_mode=10, pin_rst=22)
+    print("✓ MFRC522 initialized successfully with updated pin configuration")
+    print("✓ Hardware reset pin (GPIO 22) configured and tested")
+
     try:
-        # Initialize MFRC522 with updated pins
-        print("Initializing MFRC522...")
-        reader = MFRC522(bus=0, device=0, spd=1000000, pin_mode=10, pin_rst=22)
-        print("✓ MFRC522 initialized successfully with updated pin configuration")
-        print("✓ Hardware reset pin (GPIO 22) configured and tested")
+        print("Place an NFC card on the reader...")
+        print("Press Ctrl+C to exit")
         
-        last_uid = None
         while True:
-            try:
-                # Check if a new card is present
-                (status, TagType) = reader.MFRC522_Request(reader.PICC_REQIDL)
-                if status == reader.MI_OK:
-                    print("✓ Card detected!")
+            # Request tag
+            (status, TagType) = reader.request(reader.REQIDL)
+            
+            if status == reader.OK:
+                print("✓ Card detected!")
+                
+                # Get the UID
+                (status, uid) = reader.SelectTagSN()
+                if status == reader.OK:
+                    uid_str = ''.join([f'{b:02X}' for b in uid])
+                    print(f"Card UID: {uid_str}")
                     
-                    # Read the card serial
-                    (status, uid) = reader.MFRC522_Anticoll()
-                    if status == reader.MI_OK:
-                        # Convert UID to hex string
-                        uid_hex = ''.join([f'{b:02X}' for b in uid[:4]])
-                        
-                        # Check if it's the same card
-                        if last_uid == uid_hex:
-                            time.sleep(0.5)
-                            continue
-                        
-                        print(f"Card UID: {uid_hex}")
-                        last_uid = uid_hex
-                        
-                        # Write string if -w flag is provided
-                        if args.write:
-                            if write_string_to_card(reader, uid, args.write):
-                                print("✓ Successfully wrote string to card")
-                            else:
-                                print("✗ Failed to write string to card")
-                        
-                        # Read string from card
+                    if args.write:
+                        # Write mode
+                        if write_string_to_card(reader, uid, args.write):
+                            print("✓ Successfully wrote string to card")
+                        else:
+                            print("✗ Failed to write string to card")
+                    else:
+                        # Read mode
                         text = read_string_from_card(reader, uid)
                         if text:
                             print(f"✓ Read string from card: '{text}'")
                         else:
                             print("✗ No readable string found on card")
-                        
-                        # Halt the card
-                        reader.MFRC522_StopCrypto1()
-                        print("-" * 50)
-                    else:
-                        print("✗ Failed to read card serial")
+                    
+                    print("-" * 50)
+                    break  # Exit after processing one card
                 else:
-                    # No card detected, reset last_uid after a delay
-                    if last_uid is not None:
-                        time.sleep(1)
-                        last_uid = None
-                
-                time.sleep(0.1)
-                
-            except Exception as e:
-                print(f"Error during card detection: {e}")
-                time.sleep(1)
-    
+                    print("✗ Failed to select tag")
+            else:
+                time.sleep(0.1)  # Small delay before next attempt
+
     except KeyboardInterrupt:
-        print("\nExiting...")
+        print("\nInterrupted by user")
     except Exception as e:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        if 'reader' in locals():
-            reader.Close_MFRC522()
-        print("Cleanup complete")
+        print("Cleaning up GPIO...")
+        GPIO.cleanup()
+        print("Done!")
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
