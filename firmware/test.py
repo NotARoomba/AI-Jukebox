@@ -77,6 +77,10 @@ class CustomRC522:
     TCounterValueRegH = 0x2E
     TCounterValueRegL = 0x2F
     
+    # CRC Registers
+    CRCResultRegL = 0x21
+    CRCResultRegM = 0x22
+    
     def __init__(self, bus=0, device=0, speed=1000000, pin_rst=22):
         """Initialize the RC522"""
         self.spi = spidev.SpiDev()
