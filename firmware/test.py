@@ -139,79 +139,86 @@ def read_string_from_card(reader, uid):
         
         print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
         
-        # Read block 4 (NDEF data) using NTAG-specific read method
-        stat, block4 = reader.readNTAGBlock(4)
-        if stat != reader.OK or not block4 or len(block4) < 8:
-            print("✗ Failed to read block 4 or insufficient data")
+        # Read all blocks to reconstruct the data
+        all_data = []
+        current_block = 4
+        
+        while current_block <= reader.NTAG_MaxPage:
+            stat, block = reader.readNTAGBlock(current_block)
+            if stat == reader.OK and block and len(block) > 0:
+                print(f"Block {current_block}: {' '.join([f'{b:02X}' for b in block])}")
+                all_data.extend(block)
+                
+                # Check if we hit a terminator or all zeros
+                if block[0] == 0xFE or all(b == 0 for b in block):
+                    print(f"Found terminator or end of data at block {current_block}")
+                    break
+            else:
+                break
+            current_block += 1
+        
+        if not all_data:
+            print("✗ No data found")
             return None
         
-        print(f"Block 4: {' '.join([f'{b:02X}' for b in block4])}")
+        print(f"Total data read: {len(all_data)} bytes")
+        print(f"All data: {' '.join([f'{b:02X}' for b in all_data[:32]])}...")
         
-        # Check if it's NDEF data
-        if block4[0] != 0x03:
-            print("✗ Not NDEF data")
+        # Look for NDEF TLV structure
+        ndef_start = -1
+        for i in range(len(all_data) - 2):
+            if all_data[i] == 0x03:  # NDEF TLV tag
+                ndef_start = i
+                break
+        
+        if ndef_start == -1:
+            print("✗ No NDEF TLV structure found")
             return None
         
-        # Get NDEF length
-        ndef_length = block4[1]
+        print(f"Found NDEF TLV at position {ndef_start}")
+        
+        # Extract NDEF data
+        ndef_length = all_data[ndef_start + 1]
         print(f"NDEF length: {ndef_length}")
         
-        # Check if NDEF is empty
         if ndef_length == 0:
             print("✗ NDEF is empty")
             return None
         
-        # Check if it's a text record
-        if block4[2] != 0xD1:
-            print("✗ Not a text record")
+        # Look for text record
+        text_start = -1
+        for i in range(ndef_start + 2, min(ndef_start + 2 + ndef_length, len(all_data) - 1)):
+            if all_data[i] == 0xD1 and i + 1 < len(all_data) and all_data[i + 1] == 0x01:
+                text_start = i
+                break
+        
+        if text_start == -1:
+            print("✗ No text record found")
             return None
         
-        # Get text length (safely) - this is the payload length
-        if len(block4) < 6:
-            print("✗ Insufficient data in block 4")
+        print(f"Found text record at position {text_start}")
+        
+        # Extract text length
+        if text_start + 5 >= len(all_data):
+            print("✗ Insufficient data for text length")
             return None
         
-        text_length = block4[5]
+        text_length = all_data[text_start + 5]
         print(f"Text length: {text_length}")
         
-        # Check if text length is valid (should be reasonable)
-        if text_length == 0 or text_length > 1000:  # Sanity check
+        if text_length == 0 or text_length > 1000:
             print("✗ Invalid text length")
             return None
         
-        # Extract text from all blocks
+        # Extract text data
         text_bytes = bytearray()
-        start_pos = 8  # Start after language code (2 bytes)
+        text_data_start = text_start + 8  # Skip header and language code
         
-        # Read from block 4 (only the text part, not the full block)
-        bytes_read = 0
-        for i in range(start_pos, min(start_pos + text_length, len(block4))):
-            if block4[i] != 0 and block4[i] != 0xFE:  # Skip null bytes and terminator
-                text_bytes.append(block4[i])
-                bytes_read += 1
-                if bytes_read >= text_length:
+        for i in range(text_data_start, min(text_data_start + text_length, len(all_data))):
+            if all_data[i] != 0 and all_data[i] != 0xFE:
+                text_bytes.append(all_data[i])
+                if len(text_bytes) >= text_length:
                     break
-        
-        # Calculate how many more blocks we need to read
-        remaining_length = text_length - bytes_read
-        current_block = 5
-        
-        while remaining_length > 0 and current_block <= reader.NTAG_MaxPage:
-            stat, block = reader.readNTAGBlock(current_block)
-            if stat == reader.OK and block and len(block) > 0:
-                print(f"Block {current_block}: {' '.join([f'{b:02X}' for b in block])}")
-                for i in range(len(block)):
-                    if remaining_length <= 0:
-                        break
-                    if block[i] != 0 and block[i] != 0xFE:  # Skip null bytes and terminator
-                        text_bytes.append(block[i])
-                        remaining_length -= 1
-                    elif block[i] == 0xFE:  # Stop if we hit terminator
-                        print(f"Found terminator at block {current_block}, position {i}")
-                        break
-            else:
-                break
-            current_block += 1
         
         if not text_bytes:
             print("✗ No text data found")
