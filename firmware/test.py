@@ -79,6 +79,20 @@ def write_string_to_card(reader, uid, text):
         result = reader.writeNTAGBlockDirect(4, block4)
         if result == reader.OK:
             print("✓ Successfully wrote block 4")
+            
+            # Verify the write by reading it back
+            print("Verifying write by reading block 4...")
+            stat, read_block4 = reader.readNTAGBlock(4)
+            if stat == reader.OK and read_block4:
+                print(f"Read back block 4: {' '.join([f'{b:02X}' for b in read_block4])}")
+                if read_block4[0] == 0x03 and read_block4[1] == ndef_length:
+                    print("✓ Write verification successful")
+                else:
+                    print("✗ Write verification failed - data corrupted")
+                    return False
+            else:
+                print("✗ Could not read back block 4 for verification")
+                return False
         else:
             print(f"✗ Failed to write block 4: {result}")
             return False

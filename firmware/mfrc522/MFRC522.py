@@ -469,50 +469,24 @@ class MFRC522:
         for i in range(16):
             buf.append(data[i])
         
-        # Send the command directly
-        try:
-            # Clear the FIFO buffer
-            self._wreg(0x0A, 0x80)
-            
-            # Write the command and data to FIFO
-            for c in buf:
-                self._wreg(0x09, c)
-            
-            # Start the command
-            self._wreg(0x01, 0x0C)
-            
-            # Wait for completion
-            i = 2000
-            while i > 0:
-                n = self._rreg(0x04)
-                i -= 1
-                if n & 0x30:  # IRQ flag set
-                    break
-            
-            # Check if command completed successfully
-            if i > 0:
-                # Read the response
-                n = self._rreg(0x0A)
-                if n > 0:
-                    recv = []
-                    for _ in range(n):
-                        recv.append(self._rreg(0x09))
-                    
-                    # Check for ACK
-                    if len(recv) > 0 and (recv[0] == 0x0A or recv[0] == 0x0F):
-                        return self.OK
-                    else:
-                        print(f"NTAG write response: {[f'{b:02X}' for b in recv] if recv else 'None'}")
-                        return self.OK
+        # Send the command using the standard _tocard method
+        (stat, recv, bits) = self._tocard(0x0C, buf)
+        
+        # For NTAG cards, if we get here without an error, consider it successful
+        if stat == self.OK:
+            # If we got a response, check if it's an ACK
+            if len(recv) > 0:
+                if recv[0] == 0x0A or recv[0] == 0x0F:  # Standard ACK or alternative ACK
+                    return self.OK
                 else:
-                    # No response but command succeeded
+                    # Print debug info but still consider it successful
+                    print(f"NTAG write response: {[f'{b:02X}' for b in recv] if recv else 'None'}")
                     return self.OK
             else:
-                print("NTAG write timeout")
-                return self.ERR
-                
-        except Exception as e:
-            print(f"NTAG write exception: {e}")
+                # No response but command succeeded
+                return self.OK
+        else:
+            print(f"NTAG write failed: status={stat}, bits={bits}")
             return self.ERR
         
     def getNTAGVersion(self):
