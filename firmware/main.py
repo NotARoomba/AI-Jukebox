@@ -267,9 +267,9 @@ def main():
                         last_tag_text = text
                     else:
                         # Stop existing playback only if changing track
-                if player is not None:
-                    fade_out_and_stop(player)
-                    player = None
+                        if player is not None:
+                            fade_out_and_stop(player)
+                            player = None
                         playlist = []
                         current_track_url = None
 
