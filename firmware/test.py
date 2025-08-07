@@ -80,11 +80,13 @@ def clear_ultralight_tag(reader, start_page=4, end_page=35):
             zero_data = [0x00, 0x00, 0x00, 0x00]
             
             # Write zeros to the page
-            reader.MFRC522_WriteUltralight(page_addr, zero_data)
-            
-            # Small delay to ensure write completes
-            time.sleep(0.1)
-            pages_cleared += 1
+            success = reader.MFRC522_WriteUltralight(page_addr, zero_data)
+            if success:
+                # Small delay to ensure write completes
+                time.sleep(0.1)
+                pages_cleared += 1
+            else:
+                print(f"Warning: Failed to clear page {page_addr}")
             
         except Exception as e:
             print(f"Warning: Failed to clear page {page_addr}: {e}")
@@ -153,7 +155,10 @@ def write_ultralight_tag(reader, text):
         page_data = page_data[:buffer_size]
         
         # Write to ultralight page (starting from page 4)
-        reader.MFRC522_WriteUltralight(page_addr, page_data)
+        success = reader.MFRC522_WriteUltralight(page_addr, page_data)
+        if not success:
+            print(f"Failed to write page {page_addr}")
+            return False
         
         # Small delay to ensure write completes
         time.sleep(0.1)

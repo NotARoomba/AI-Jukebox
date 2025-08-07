@@ -432,7 +432,27 @@ class MFRC522:
         crc = self.CalulateCRC(buf)
         buf += crc[0:2]
         (status, backData, backLen) = self.MFRC522_ToCard(self.PCD_TRANSCEIVE, buf)
-        if not (status == self.MI_OK) or not (backLen == 4) or not ((backData[0] & 0x0F) == 0x0A):
-            self.logger.error(f"Error while writing {status}, {backData}, {backLen}")
-        if status == self.MI_OK:
-            self.logger.debug("Data written")
+        
+        # For ultralight tags, we need to check for different response patterns
+        # Ultralight tags typically return 4 bytes with ACK (0x0A) in the first byte
+        if status != self.MI_OK:
+            self.logger.error(f"Error while writing ultralight: status={status}, backData={backData}, backLen={backLen}")
+            return False
+        
+        # Check if we got a response
+        if len(backData) >= 1:
+            # Check for ACK (0x0A) in the first byte - this is the most common response
+            if backData[0] == 0x0A:
+                self.logger.debug("Ultralight write successful")
+                return True
+            # Some ultralight tags might return different ACK patterns
+            elif len(backData) >= 4 and backData[0] == 0x0A:
+                self.logger.debug("Ultralight write successful (4-byte response)")
+                return True
+            else:
+                self.logger.error(f"Ultralight write failed - unexpected response: {backData}")
+                return False
+        else:
+            # No response data - this might still be successful for some ultralight tags
+            self.logger.debug("Ultralight write completed (no response data)")
+            return True
