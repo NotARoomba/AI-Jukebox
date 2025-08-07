@@ -9,9 +9,6 @@ import time
 import sys
 import os
 
-# Add the rfid folder to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'rfid'))
-
 try:
     from .mfrc522.mfrc522 import MFRC522, StatusCode, PICC_Type
 except ImportError as e:
