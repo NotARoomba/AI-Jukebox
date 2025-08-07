@@ -211,12 +211,12 @@ def main():
     parser.add_argument('-w', '--write', type=str, help='String to write to the card')
     args = parser.parse_args()
 
-    # Set up signal handler for clean exit
     signal.signal(signal.SIGINT, signal_handler)
 
-    # Initialize MFRC522
     print("Initializing MFRC522...")
     reader = MFRC522(bus=0, device=0, spd=1000000, pin_mode=10, pin_rst=22)
+    # Turn on verbose debug in the library
+    reader.DEBUG = True
     print("✓ MFRC522 initialized successfully with updated pin configuration")
     print("✓ Hardware reset pin (GPIO 22) configured and tested")
 
@@ -225,26 +225,26 @@ def main():
         print("Press Ctrl+C to exit")
         
         while True:
-            # Request tag
             (status, TagType) = reader.request(reader.REQIDL)
             
             if status == reader.OK:
                 print("✓ Card detected!")
                 
-                # Get the UID
                 (status, uid) = reader.SelectTagSN()
                 if status == reader.OK:
                     uid_str = ''.join([f'{b:02X}' for b in uid])
                     print(f"Card UID: {uid_str}")
+
+                    # Dump NTAG version frame
+                    s, v = reader.getNTAGVersion()
+                    print(f"[DEBUG] getNTAGVersion stat={s} ver={[f'{b:02X}' for b in (v or [])]}")
                     
                     if args.write:
-                        # Write mode
                         if write_string_to_card(reader, uid, args.write):
                             print("✓ Successfully wrote string to card")
                         else:
                             print("✗ Failed to write string to card")
                     else:
-                        # Read mode
                         text = read_string_from_card(reader, uid)
                         if text:
                             print(f"✓ Read string from card: '{text}'")
@@ -252,11 +252,11 @@ def main():
                             print("✗ No readable string found on card")
                     
                     print("-" * 50)
-                    break  # Exit after processing one card
+                    break
                 else:
                     print("✗ Failed to select tag")
             else:
-                time.sleep(0.1)  # Small delay before next attempt
+                time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\nInterrupted by user")

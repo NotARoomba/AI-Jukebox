@@ -101,6 +101,10 @@ class MFRC522:
         bits = irq_en = wait_irq = n = 0
         stat = self.ERR
 
+        if self.DEBUG:
+            print(f"[DEBUG] _tocard cmd={cmd:02X} send=[{self._hex(send)}]")
+            self.dump_debug_regs("before")
+
         if cmd == 0x0E:
             irq_en = 0x12
             wait_irq = 0x10
@@ -152,6 +156,10 @@ class MFRC522:
                         recv.append(self._rreg(0x09))
             else:
                 stat = self.ERR
+
+        if self.DEBUG:
+            print(f"[DEBUG] _tocard stat={stat} bits={bits} recv=[{self._hex(recv)}] i={i}")
+            self.dump_debug_regs("after")
 
         return stat, recv, bits
 
@@ -335,17 +343,18 @@ class MFRC522:
         if page < 0:
             return self.ERR, None
         
-        # NTAG read command: 0x30
         data = [0x30, page]
         data += self._crc(data)
+        if self.DEBUG:
+            print(f"[DEBUG] readNTAGBlock page={page} frame=[{self._hex(data)}]")
         (stat, recv, _) = self._tocard(0x0C, data)
+        if self.DEBUG:
+            print(f"[DEBUG] readNTAGBlock resp stat={stat} data=[{self._hex(recv)}]")
         
         if stat == self.OK and len(recv) > 0:
-            # NTAG cards should return 16 bytes, but let's be flexible
             if len(recv) < 16:
-                # Pad with zeros if we got fewer bytes
                 recv.extend([0] * (16 - len(recv)))
-            return self.OK, recv[:16]  # Ensure we return exactly 16 bytes
+            return self.OK, recv[:16]
         else:
             return self.ERR, None
 
@@ -376,19 +385,19 @@ class MFRC522:
         if len(data) != 4:
             return self.ERR
         
-        # NTAG page write command: [0xA2, page, d0, d1, d2, d3]
         buf = [0xA2, page] + list(data)
+        if self.DEBUG:
+            print(f"[DEBUG] writeNTAGPage page={page} frame=[{self._hex(buf)}]")
         (stat, recv, bits) = self._tocard(0x0C, buf)
+        if self.DEBUG:
+            print(f"[DEBUG] writeNTAGPage resp stat={stat} bits={bits} recv=[{self._hex(recv)}]")
         if stat == self.OK:
             if len(recv) == 0:
                 return self.OK
             if recv[0] in (0x0A, 0x0F):
                 return self.OK
-            # Some tags echo last frame; accept but log
-            # print(f"NTAG page write response: {[f'{b:02X}' for b in recv]}")
             return self.OK
         else:
-            # print(f"NTAG page write failed: status={stat}, bits={bits}")
             return self.ERR
 
     def writeNTAGBlock(self, base_page, data16):
@@ -522,6 +531,29 @@ class MFRC522:
                 self.NTAG_MaxPage = 230                  
                 return True
         return False
+
+    def _hex(self, data):
+        return ' '.join(f"{b:02X}" for b in data)
+
+    def dump_debug_regs(self, label=""): 
+        try:
+            regs = {
+                'ComIrqReg': self._rreg(0x04),
+                'ErrorReg': self._rreg(0x06),
+                'Status1Reg': self._rreg(0x07),
+                'Status2Reg': self._rreg(0x08),
+                'FIFOLevelReg': self._rreg(0x0A),
+                'ControlReg': self._rreg(0x0C),
+                'BitFramingReg': self._rreg(0x0D),
+                'ModeReg': self._rreg(0x11),
+                'TxControlReg': self._rreg(0x14),
+                'CRCResultL': self._rreg(0x21),
+                'CRCResultM': self._rreg(0x22),
+                'VersionReg': self._rreg(0x37),
+            }
+            print(f"[DEBUG] RegDump {label}: " + ' '.join([f"{k}={v:02X}" for k,v in regs.items()]))
+        except Exception as e:
+            print(f"[DEBUG] RegDump {label} failed: {e}")
 
     # Legacy methods for compatibility
     def MFRC522_Request(self, reqMode):
