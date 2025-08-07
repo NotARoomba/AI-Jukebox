@@ -169,13 +169,16 @@ class NDEFReader:
                 print("Still failed to select tag")
                 return []
         
-        # Based on the actual NTAG data structure, NDEF data starts at address 04
-        # and the data shows: 03:10:d1:01:0c:54:02:65:6e:68:61:67:67:73:74:72:6f:6d:fe:00
-        print("Reading NTAG data starting from address 04...")
-        all_data = bytearray()
+        # Read all sectors until we hit null data for debugging
+        print("\n" + "="*60)
+        print("RAW NFC DATA DUMP (All Sectors Until Null Data)")
+        print("="*60)
         
-        # Read from address 04 onwards (which corresponds to block 4)
-        for block_addr in range(4, 16):
+        all_data = bytearray()
+        null_data_count = 0
+        max_sectors = 36  # NTAG215 has 36 pages (0-35)
+        
+        for block_addr in range(max_sectors):
             try:
                 # Try custom NTAG reading first
                 block_data = self.read_ntag_block(block_addr)
@@ -186,34 +189,99 @@ class NDEFReader:
                         block_data = bytes(block_data)
                 
                 if block_data and len(block_data) == 16:
-                    all_data.extend(block_data)
-                    print(f"Block {block_addr}: {block_data[:8]}...")
-                    
-                    # Check for NDEF TLV structure in this block
-                    for i, byte in enumerate(block_data):
-                        if byte == 0x03:  # NDEF TLV tag
-                            print(f"  Found NDEF TLV tag at block {block_addr}, position {i}")
-                        elif byte == 0xD1:  # NDEF text record header
-                            print(f"  Found NDEF text record header at block {block_addr}, position {i}")
-                        elif byte == 0x02:  # Status byte for UTF-8 text
-                            print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
-                        elif byte == 0xFE:  # Terminator TLV
-                            print(f"  Found terminator TLV at block {block_addr}, position {i}")
+                    # Check if this block is all null/zero data
+                    if all(b == 0x00 for b in block_data):
+                        null_data_count += 1
+                        print(f"Block {block_addr:02d}: {'00'*16} (NULL DATA)")
+                        # If we've hit 3 consecutive null blocks, stop reading
+                        if null_data_count >= 3:
+                            print(f"Stopping at block {block_addr} - hit {null_data_count} consecutive null blocks")
+                            break
+                    else:
+                        null_data_count = 0  # Reset null counter
+                        all_data.extend(block_data)
+                        
+                        # Print the block data in hex format
+                        hex_data = ' '.join(f'{b:02X}' for b in block_data)
+                        ascii_data = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in block_data)
+                        print(f"Block {block_addr:02d}: {hex_data} | {ascii_data}")
+                        
+                        # Check for NDEF TLV structure in this block
+                        for i, byte in enumerate(block_data):
+                            if byte == 0x03:  # NDEF TLV tag
+                                print(f"    -> Found NDEF TLV tag at position {i}")
+                            elif byte == 0xD1:  # NDEF text record header
+                                print(f"    -> Found NDEF text record header at position {i}")
+                            elif byte == 0x02:  # Status byte for UTF-8 text
+                                print(f"    -> Found status byte 0x02 at position {i}")
+                            elif byte == 0xFE:  # Terminator TLV
+                                print(f"    -> Found terminator TLV at position {i}")
                 else:
-                    print(f"Block {block_addr}: No data or invalid length")
-                    if block_data:
-                        print(f"  Block data length: {len(block_data)}")
-                    # Continue to next block
+                    print(f"Block {block_addr:02d}: FAILED TO READ")
+                    null_data_count += 1
+                    if null_data_count >= 3:
+                        print(f"Stopping at block {block_addr} - hit {null_data_count} consecutive failed reads")
+                        break
             except Exception as e:
-                print(f"Error reading block {block_addr}: {e}")
-                continue
+                print(f"Block {block_addr:02d}: ERROR - {e}")
+                null_data_count += 1
+                if null_data_count >= 3:
+                    print(f"Stopping at block {block_addr} - hit {null_data_count} consecutive errors")
+                    break
         
-        print(f"Total data read: {len(all_data)} bytes")
+        print("="*60)
+        print(f"TOTAL DATA READ: {len(all_data)} bytes")
         if all_data:
-            print(f"Raw data (first 32 bytes): {all_data[:32]}")
-            print(f"Raw data (hex): {' '.join(f'{b:02X}' for b in all_data[:32])}")
+            print(f"FIRST 64 BYTES: {' '.join(f'{b:02X}' for b in all_data[:64])}")
+            print(f"ASCII PREVIEW: {''.join(chr(b) if 32 <= b <= 126 else '.' for b in all_data[:64])}")
             
-            # Try to parse this data
+            # Summary of key findings
+            print("\nKEY FINDINGS:")
+            ndef_tlv_count = sum(1 for b in all_data if b == 0x03)
+            ndef_text_count = sum(1 for b in all_data if b == 0xD1)
+            status_byte_count = sum(1 for b in all_data if b == 0x02)
+            terminator_count = sum(1 for b in all_data if b == 0xFE)
+            
+            if ndef_tlv_count > 0:
+                print(f"  - Found {ndef_tlv_count} NDEF TLV tags (0x03)")
+            if ndef_text_count > 0:
+                print(f"  - Found {ndef_text_count} NDEF text record headers (0xD1)")
+            if status_byte_count > 0:
+                print(f"  - Found {status_byte_count} status bytes (0x02)")
+            if terminator_count > 0:
+                print(f"  - Found {terminator_count} terminator TLVs (0xFE)")
+            
+            # Look for specific text patterns
+            if b'haggstrom' in all_data:
+                print(f"  - Found 'haggstrom' text in data")
+            if b'hagom' in all_data:
+                print(f"  - Found 'hagom' text in data")
+            
+            # Show printable text sequences
+            printable_sequences = []
+            current_sequence = ""
+            for byte in all_data:
+                if 32 <= byte <= 126:  # Printable ASCII
+                    current_sequence += chr(byte)
+                else:
+                    if len(current_sequence) >= 3:
+                        printable_sequences.append(current_sequence)
+                    current_sequence = ""
+            
+            if len(current_sequence) >= 3:
+                printable_sequences.append(current_sequence)
+            
+            if printable_sequences:
+                print(f"  - Found {len(printable_sequences)} printable text sequences:")
+                for seq in printable_sequences[:5]:  # Show first 5 sequences
+                    print(f"    * '{seq}'")
+                if len(printable_sequences) > 5:
+                    print(f"    * ... and {len(printable_sequences) - 5} more")
+        print("="*60)
+        
+        # Now try to parse the NDEF data
+        if all_data:
+            print("\nParsing NDEF data...")
             records = self.parse_ndef_data(all_data)
             if records:
                 print(f"Found {len(records)} records")
