@@ -140,8 +140,11 @@ class NDEFReader:
         if status != self.reader.MI_OK:
             return []
         
-        # Read data from blocks 4-15 (typical NDEF area)
+        # For NFC Forum Type 2 tags (like NTAG215), NDEF data starts from page 4
+        # Read data from blocks 4-15 (typical NDEF area for Type 2 tags)
         all_data = bytearray()
+        
+        print("Reading from page 4 (block 4) onwards for NFC Forum Type 2 format...")
         
         for block_addr in range(4, 16):
             try:
@@ -149,7 +152,17 @@ class NDEFReader:
                 if block_data:
                     all_data.extend(block_data)
                     print(f"Block {block_addr}: {block_data[:8]}...")  # Debug output
+                    
+                    # Check for NDEF TLV structure in this block
+                    for i, byte in enumerate(block_data):
+                        if byte == 0x03:  # NDEF TLV tag
+                            print(f"  Found NDEF TLV tag at block {block_addr}, position {i}")
+                        elif byte == 0xD1:  # NDEF text record header
+                            print(f"  Found NDEF text record header at block {block_addr}, position {i}")
+                        elif byte == 0x02:  # Status byte for UTF-8 text
+                            print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
                 else:
+                    print(f"Block {block_addr}: No data")
                     break
             except Exception as e:
                 print(f"Error reading block {block_addr}: {e}")
