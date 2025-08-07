@@ -10,7 +10,7 @@ PIN_VOLUME_UP  = 23  # Add volume up button
 PIN_VOLUME_DOWN = 24  # Add volume down button
 
 # Default volume setting (0-100)
-DEFAULT_VOLUME = 70  # 70% volume by default
+DEFAULT_VOLUME = 100  # 70% volume by default
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(PIN_PLAY_PAUSE, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
