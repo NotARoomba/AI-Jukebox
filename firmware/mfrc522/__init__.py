@@ -1,8 +1,5 @@
-# Import the main classes and enums
+# MFRC522 Library for All NTAG Types
 from .MFRC522 import MFRC522, NTAGType
 from .SimpleMFRC522 import SimpleMFRC522
 
-# Make sure NTAGType is available at module level
 __all__ = ['MFRC522', 'NTAGType', 'SimpleMFRC522']
-
-name = "mfrc522"

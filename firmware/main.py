@@ -10,7 +10,7 @@ import requests
 
 # Try to import the local mfrc522 library
 try:
-    from mfrc522.SimpleMFRC522 import SimpleMFRC522
+    from mfrc522 import MFRC522, NTAGType, SimpleMFRC522
     MFRC522_AVAILABLE = True
 except ImportError:
     # Fallback to global mfrc522 if local not available
@@ -108,39 +108,25 @@ def play_audio_url(audio_url):
     finally:
         GPIO.cleanup()
 
-def process_ntag215_data(decoded_data):
+def process_ntag_data(uid, text_data, ntag_type):
     """
-    Process decoded NTAG215 data and extract song information
+    Process NTAG data and extract song information
     
     Args:
-        decoded_data: Decoded NTAG215 data dictionary
+        uid: UID of the tag
+        text_data: Text data from the tag
+        ntag_type: NTAG type
         
     Returns:
         Tuple of (song_type, song_data) or (None, None) if no valid song data
     """
     try:
-        # Check for NDEF data first
-        ndef_data = decoded_data.get('ndef_data', {})
-        if 'error' not in ndef_data:
-            payload_text = ndef_data.get('payload_text', '').strip()
-            if payload_text:
-                return process_text_payload(payload_text)
+        # Check for text data first
+        if text_data and text_data.strip():
+            return process_text_payload(text_data.strip())
         
-        # Check user data area for custom data
-        user_data = decoded_data.get('user_data', {})
-        user_bytes = user_data.get('bytes', b'')
-        if user_bytes:
-            # Try to decode as text
-            try:
-                user_text = user_bytes.decode('utf-8', errors='ignore').strip()
-                if user_text:
-                    return process_text_payload(user_text)
-            except:
-                pass
-        
-        # Check UID for encoded data
-        uid = decoded_data.get('uid', {})
-        uid_hex = uid.get('hex', '')
+        # If no text data, could check UID for encoded data
+        uid_hex = ''.join([f'{b:02X}' for b in uid])
         if uid_hex and len(uid_hex) >= 8:
             # Could encode data in UID (though this is unusual)
             pass
@@ -148,7 +134,7 @@ def process_ntag215_data(decoded_data):
         return None, None
         
     except Exception as e:
-        print(f"Error processing NTAG215 data: {e}")
+        print(f"Error processing NTAG data: {e}")
         return None, None
 
 def process_text_payload(text):
@@ -193,8 +179,8 @@ def main():
         use_enhanced = True
     else:
         if MFRC522_AVAILABLE:
-            print("⚠ Using basic RFID reader (enhanced features not available)")
-            reader = SimpleMFRC522()
+            print("✓ Using MFRC522 library with NTAG support")
+            reader = MFRC522()
             use_enhanced = False
         else:
             print("✗ No MFRC522 library available")
@@ -204,7 +190,7 @@ def main():
     # e.g. m_minecraft, m_chirp, m_cat, etc.
     # AI generated songs will have a bitmask that indicates the mood, denoted by a_{bitmask}
 
-    last_id = None
+    last_uid = None
     tries = 0
     print("Starting main loop")
     try:
@@ -219,21 +205,21 @@ def main():
                         print(f"NTAG215 Card detected - UID: {uid}")
                         
                         # Process the decoded data
-                        song_type, song_data = process_ntag215_data(decoded_data)
+                        song_type, song_data = process_ntag_data(uid, decoded_data.get('ndef_data', {}).get('payload_text', ''), NTAGType.NTAG215)
                         
                         if song_type == 'minecraft':
-                            if last_id == uid:
+                            if last_uid == uid:
                                 tries = 0
-                                last_id = uid
+                                last_uid = uid
                                 continue
                             song_name = song_data
                             print(f"Playing Minecraft song: {song_name}")
                             play_audio_url(f"audio/{song_name}.mp3")
                             
                         elif song_type == 'ai':
-                            if last_id == uid:
+                            if last_uid == uid:
                                 tries = 0
-                                last_id = uid
+                                last_uid = uid
                                 continue
                             mask = song_data
                             moods = extract_flags(mask)
@@ -262,61 +248,79 @@ def main():
                                 time.sleep(5)
                         else:
                             print("Unknown song format or no valid song data found.")
-                            last_id = uid
+                            last_uid = uid
                     else:
                         print("No card detected or failed to decode")
                         
                 else:
-                    # Use basic reader
-                    tag_id, tag_text = reader.read()
-                    print(f"ID: {tag_id}, Text: {tag_text.strip()}")
-                    
-                    if tag_text.startswith('m_'):
-                        if last_id == tag_id:
+                    # Use new MFRC522 library with NTAG support
+                    (success, uid, ntag_type) = reader.detect_ntag()
+                    if success:
+                        uid_str = ''.join([f'{b:02X}' for b in uid])
+                        print(f"NTAG Card detected - UID: {uid_str}, Type: {ntag_type.name}")
+                        
+                        if last_uid == uid_str:
                             tries = 0
-                            last_id = tag_id
+                            last_uid = uid_str
                             continue
-                        song_name = tag_text[2:].strip()
-                        print(f"Playing Minecraft song: {song_name}")
-                        play_audio_url(f"audio/{song_name}.mp3")
-                    elif tag_text.startswith('a_'):
-                        if last_id == tag_id:
-                            tries = 0
-                            last_id = tag_id
-                            continue
-                        try:
-                            mask = int(tag_text[2:].strip(), 16)
-                            moods = extract_flags(mask)
-                            print(f"Playing AI generated song with moods: {', '.join(moods)}")
-                            data = generate_audio_by_prompt({
-                                "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
-                                "make_instrumental": True,
-                                "wait_audio": False
-                            })
-
-                            ids = f"{data[0]['id']},{data[1]['id']}"
-                            print(f"ids: {ids}")
-
-                            for _ in range(60):
-                                data = get_audio_information(ids)
-                                if data[0]["status"] == 'streaming':
-                                    url_1 = data[0]["audio_url"]
-                                    url_2 = data[1]["audio_url"]
-                                    print(f"{data[0]['id']} ==> {url_1}")
-                                    print(f"{data[1]['id']} ==> {url_2}")
+                        
+                        # Read data from NTAG pages
+                        data_bytes = reader.read_ntag_data(ntag_type)
+                        
+                        if data_bytes:
+                            # Remove trailing zeros
+                            while data_bytes and data_bytes[-1] == 0:
+                                data_bytes.pop()
+                            
+                            if data_bytes:
+                                # Convert to text, filtering out non-printable characters
+                                text_data = ''.join(chr(b) for b in data_bytes if b >= 32 and b <= 126)
+                                print(f"Tag data: {text_data}")
+                                
+                                # Process the text data
+                                song_type, song_data = process_ntag_data(uid, text_data, ntag_type)
+                                
+                                if song_type == 'minecraft':
+                                    song_name = song_data
+                                    print(f"Playing Minecraft song: {song_name}")
+                                    play_audio_url(f"audio/{song_name}.mp3")
                                     
-                                    play_audio_url(url_1)
-                                    play_audio_url(url_2)
-                                    break
-                                time.sleep(5)
-                        except ValueError:
-                            print("Invalid mood bitmask format.")
+                                elif song_type == 'ai':
+                                    mask = song_data
+                                    moods = extract_flags(mask)
+                                    print(f"Playing AI generated song with moods: {', '.join(moods)}")
+                                    data = generate_audio_by_prompt({
+                                        "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
+                                        "make_instrumental": True,
+                                        "wait_audio": False
+                                    })
+
+                                    ids = f"{data[0]['id']},{data[1]['id']}"
+                                    print(f"ids: {ids}")
+
+                                    for _ in range(60):
+                                        data = get_audio_information(ids)
+                                        if data[0]["status"] == 'streaming':
+                                            url_1 = data[0]["audio_url"]
+                                            url_2 = data[1]["audio_url"]
+                                            print(f"{data[0]['id']} ==> {url_1}")
+                                            print(f"{data[1]['id']} ==> {url_2}")
+                                            
+                                            play_audio_url(url_1)
+                                            play_audio_url(url_2)
+                                            break
+                                        time.sleep(5)
+                                else:
+                                    print("Unknown song format or no valid song data found.")
+                            else:
+                                print("No readable data found on tag")
+                        else:
+                            print("Failed to read tag data")
+                        
+                        last_uid = uid_str
                     else:
-                        if last_id is not None and last_id != tag_id:
-                            print("Unknown song format or no valid song found.")
-                            last_id = tag_id
-                            time.sleep(1)
-                        print("Unknown song format.")
+                        print("No card detected")
+                        time.sleep(0.1)
                     
             except Exception as e:
                 error_msg = str(e)

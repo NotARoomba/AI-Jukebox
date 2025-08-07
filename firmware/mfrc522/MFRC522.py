@@ -349,13 +349,10 @@ class MFRC522:
         tag_type = [req_mode]
         (status, back_data, back_bits) = self.to_card(self.PCD_TRANSCEIVE, tag_type)
         
-        # For NTAG tags, we need to be more flexible with the response
         if status != self.MI_OK:
             return (self.MI_ERR, 0)
         
-        # Check if we got a valid response (should be 16 bits for REQIDL)
         if req_mode == self.PICC_REQIDL and back_bits != 0x10:
-            # Try again with different bit framing
             self.write_register(self.BitFramingReg, 0x00)
             (status, back_data, back_bits) = self.to_card(self.PCD_TRANSCEIVE, tag_type)
             if status != self.MI_OK:
@@ -373,7 +370,6 @@ class MFRC522:
         back_data = []
         ser_num_check = 0
         
-        # Clear the bit framing register for anticollision
         self.write_register(self.BitFramingReg, 0x00)
         
         ser_num = [self.PICC_ANTICOLL, 0x20]
@@ -381,17 +377,14 @@ class MFRC522:
         
         if status == self.MI_OK:
             if len(back_data) == 5:
-                # Verify the checksum
                 for i in range(4):
                     ser_num_check = ser_num_check ^ back_data[i]
                 if ser_num_check != back_data[4]:
                     self.logger.warning("Anticollision checksum failed")
-                    # Still return the data, as some tags might have checksum issues
                     return (self.MI_OK, back_data[:4])
                 else:
                     return (self.MI_OK, back_data[:4])
             elif len(back_data) == 4:
-                # Some tags return only 4 bytes (UID without checksum)
                 return (self.MI_OK, back_data)
             else:
                 self.logger.error(f"Anticollision failed: unexpected response length {len(back_data)}")
@@ -413,12 +406,9 @@ class MFRC522:
         back_data = []
         buf = [self.PICC_SElECTTAG, 0x70]
         
-        # Ensure we have exactly 5 bytes for the UID
         if len(uid) < 5:
-            # Pad with zeros if needed
             uid = uid + [0] * (5 - len(uid))
         elif len(uid) > 5:
-            # Truncate if too long
             uid = uid[:5]
         
         for i in range(5):
@@ -432,7 +422,6 @@ class MFRC522:
         
         if status == self.MI_OK:
             if len(back_data) >= 1:
-                # Return the SAK (first byte of response)
                 return back_data[0]
             else:
                 self.logger.warning("Select tag: no response data")
@@ -479,25 +468,21 @@ class MFRC522:
             Tuple of (success, uid, ntag_type)
         """
         try:
-            # Step 1: Request card detection
             (status, back_bits) = self.request(self.PICC_REQIDL)
             if status != self.MI_OK:
                 self.logger.debug("No card detected")
                 return (False, [], NTAGType.UNKNOWN)
             
-            # Step 2: Anticollision
             (status, uid) = self.anticoll()
             if status != self.MI_OK or not uid:
                 self.logger.debug("Anticollision failed")
                 return (False, [], NTAGType.UNKNOWN)
             
-            # Step 3: Select tag
             sak = self.select_tag(uid)
             if sak == 0:
                 self.logger.debug("Tag selection failed")
                 return (False, [], NTAGType.UNKNOWN)
             
-            # Step 4: Detect NTAG type
             ntag_type = self.detect_ntag_type(uid, sak)
             
             self.logger.info(f"{ntag_type.name} detected with UID: {uid}")
@@ -519,32 +504,22 @@ class MFRC522:
             NTAGType enumeration
         """
         try:
-            # Read page 3 to get capability container
             page3_data = self.read_ntag_page(3)
             if not page3_data:
                 self.logger.debug("Failed to read page 3 for capability container")
                 return NTAGType.UNKNOWN
             
-            # Check capability container (bytes 0-2)
             cc = page3_data[0:3]
             
-            # NTAG213/215/216 have CC = [0xE1, 0x10, 0x06]
             if cc == [0xE1, 0x10, 0x06]:
-                # Check UID length and structure
                 uid_length = len(uid)
                 if uid_length >= 4:
-                    # Check for NTAG213/215/216 based on UID structure
-                    if uid[0] == 0x04:  # NTAG213/215/216 start with 0x04
-                        # Try to read more pages to determine exact type
-                        # Start with NTAG213 (36 pages)
+                    if uid[0] == 0x04:
                         try:
-                            # Try to read a page beyond NTAG213 limit
                             test_page = self.read_ntag_page(36)
                             if test_page:
-                                # Try to read beyond NTAG215 limit
                                 test_page2 = self.read_ntag_page(135)
                                 if test_page2:
-                                    # Try to read beyond NTAG216 limit
                                     test_page3 = self.read_ntag_page(231)
                                     if test_page3:
                                         return NTAGType.NTAG216
@@ -556,7 +531,6 @@ class MFRC522:
                                 return NTAGType.NTAG213
                         except Exception as e:
                             self.logger.debug(f"Error during page testing: {e}")
-                            # Default to NTAG215 if detection fails
                             return NTAGType.NTAG215
                     else:
                         self.logger.debug(f"UID doesn't start with 0x04: {uid[0]:02X}")
@@ -590,7 +564,7 @@ class MFRC522:
         (status, back_data, back_len) = self.to_card(self.PCD_TRANSCEIVE, recv_data)
         
         if status == self.MI_OK and len(back_data) >= 4:
-            return back_data[:4]  # Return first 4 bytes
+            return back_data[:4]
         else:
             return None
             
@@ -621,7 +595,6 @@ class MFRC522:
                 self.logger.debug(f"NTAG write successful for page {page_addr}")
                 return True
             elif len(back_data) == 0:
-                # Some tags don't return ACK but still succeed
                 self.logger.debug(f"NTAG write completed for page {page_addr} (no ACK)")
                 return True
             else:
@@ -660,7 +633,6 @@ class MFRC522:
             if page_data:
                 data_bytes.extend(page_data)
             else:
-                # Stop reading if we can't read a page
                 break
                 
         return data_bytes if data_bytes else None
@@ -688,13 +660,11 @@ class MFRC522:
         if start_page is None:
             start_page = spec['user_pages'][0]
         
-        # Check if data is too large
         max_bytes = spec['user_bytes']
         if len(data) > max_bytes:
             self.logger.error(f"Data too large for {ntag_type.name}: {len(data)} bytes > {max_bytes} bytes")
             return False
         
-        # Pad data to 4-byte boundaries
         while len(data) % 4 != 0:
             data.append(0x00)
             
@@ -709,7 +679,7 @@ class MFRC522:
                 return False
                 
             page_addr += 1
-            time.sleep(0.01)  # Small delay between writes
+            time.sleep(0.01)
             
         return True
         
@@ -740,7 +710,6 @@ class MFRC522:
         for page_addr in range(start_page, end_page + 1):
             if not self.write_ntag_page(page_addr, zero_data):
                 self.logger.warning(f"Failed to clear page {page_addr}")
-                # Continue with other pages
                 
         return True
     
