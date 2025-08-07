@@ -51,6 +51,10 @@ class MFRC522:
     PICC_TRANSFER = 0xB0
     PICC_HALT = 0x50
 
+    # NTAG-specific commands
+    NTAG_WRITE = 0xA2
+    NTAG_READ = 0x30
+
     MI_OK = 0
     MI_NOTAGERR = 1
     MI_ERR = 2
@@ -296,15 +300,18 @@ class MFRC522:
             self.Write_MFRC522(self.FIFODataReg, pIndata[i])
 
         self.Write_MFRC522(self.CommandReg, self.PCD_CALCCRC)
+
         i = 0xFF
         while True:
             n = self.Read_MFRC522(self.DivIrqReg)
             i -= 1
             if not ((i != 0) and not (n & 0x04)):
                 break
+
         pOutData = []
         pOutData.append(self.Read_MFRC522(self.CRCResultRegL))
         pOutData.append(self.Read_MFRC522(self.CRCResultRegM))
+
         return pOutData
 
     def MFRC522_SelectTag(self, serNum):
@@ -408,6 +415,59 @@ class MFRC522:
         
         return status
 
+    # NTAG-specific methods
+    def NTAG_Read(self, pageAddr):
+        """Read a page from NTAG card"""
+        recvData = []
+        recvData.append(self.NTAG_READ)
+        recvData.append(pageAddr)
+        pOut = self.CalulateCRC(recvData)
+        recvData.append(pOut[0])
+        recvData.append(pOut[1])
+        (status, backData, backLen) = self.MFRC522_ToCard(self.PCD_TRANSCEIVE, recvData)
+        if not (status == self.MI_OK):
+            self.logger.error("Error while reading NTAG!")
+            return None
+
+        if len(backData) == 16:
+            self.logger.debug("NTAG Page " + str(pageAddr) + " " + str(backData))
+            return backData
+        else:
+            return None
+
+    def NTAG_Write(self, pageAddr, writeData):
+        """Write a page to NTAG card"""
+        if len(writeData) != 16:
+            self.logger.error("NTAG write data must be exactly 16 bytes")
+            return self.MI_ERR
+
+        # NTAG write command: 0xA2
+        buff = []
+        buff.append(self.NTAG_WRITE)
+        buff.append(pageAddr)
+        
+        # Add the data (16 bytes)
+        for i in range(16):
+            buff.append(writeData[i])
+        
+        # Send the command
+        (status, backData, backLen) = self.MFRC522_ToCard(self.PCD_TRANSCEIVE, buff)
+        
+        if status == self.MI_OK:
+            # NTAG cards typically return 4 bytes with ACK (0x0A) in the first byte
+            if len(backData) > 0 and backData[0] == 0x0A:
+                self.logger.debug("NTAG write successful")
+                return self.MI_OK
+            elif len(backData) == 0:
+                # Some NTAG cards might not return data but still succeed
+                self.logger.debug("NTAG write successful (no response data)")
+                return self.MI_OK
+            else:
+                self.logger.error(f"NTAG write failed: unexpected response {[f'{b:02X}' for b in backData] if backData else 'None'}")
+                return self.MI_ERR
+        else:
+            self.logger.error(f"NTAG write failed: status={status}, backLen={backLen}")
+            return self.MI_ERR
 
     def MFRC522_DumpClassic1K(self, key, uid):
         for i in range(64):

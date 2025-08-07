@@ -80,8 +80,8 @@ def write_string_to_card(reader, uid, text):
         
         print(f"Block 4 data: {' '.join([f'{b:02X}' for b in block4])}")
         
-        # Use custom NTAG write method
-        if write_ntag_block(reader, 4, block4):
+        # Use NTAG write method
+        if reader.NTAG_Write(4, block4) == reader.MI_OK:
             print("✓ Successfully wrote block 4")
         else:
             print("✗ Failed to write block 4")
@@ -96,7 +96,7 @@ def write_string_to_card(reader, uid, text):
             
             print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
             
-            if write_ntag_block(reader, 5, block5):
+            if reader.NTAG_Write(5, block5) == reader.MI_OK:
                 print("✓ Successfully wrote block 5")
             else:
                 print("✗ Failed to write block 5")
@@ -108,7 +108,7 @@ def write_string_to_card(reader, uid, text):
         
         # Find the next available block
         next_block = 6 if text_length > 8 else 5
-        if write_ntag_block(reader, next_block, block_terminator):
+        if reader.NTAG_Write(next_block, block_terminator) == reader.MI_OK:
             print("✓ Successfully wrote terminator")
         else:
             print("✗ Failed to write terminator")
@@ -123,50 +123,13 @@ def write_string_to_card(reader, uid, text):
         return False
 
 
-def write_ntag_block(reader, block_addr, data):
-    """Write a block to NTAG card using direct commands"""
-    try:
-        # NTAG write command: 0xA2 (NTAG-specific write command)
-        buff = []
-        buff.append(0xA2)  # NTAG write command
-        buff.append(block_addr)
-        
-        # Add the data (16 bytes)
-        for i in range(16):
-            buff.append(data[i])
-        
-        print(f"Sending NTAG write command: {' '.join([f'{b:02X}' for b in buff])}")
-        
-        # Send the command
-        (status, backData, backLen) = reader.MFRC522_ToCard(reader.PCD_TRANSCEIVE, buff)
-        
-        print(f"NTAG write response: status={status}, backLen={backLen}, backData={[f'{b:02X}' for b in backData] if backData else 'None'}")
-        
-        if status == reader.MI_OK and len(backData) > 0:
-            # Check if the response indicates success (ACK)
-            if backData[0] == 0x0A:
-                return True
-            else:
-                print(f"NTAG write failed: unexpected response {backData[0]:02X}")
-                return False
-        else:
-            print(f"NTAG write failed: status={status}, backLen={backLen}")
-            return False
-            
-    except Exception as e:
-        print(f"Error in write_ntag_block: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
 def read_string_from_card(reader, uid):
     """Read a string from the NFC card"""
     print("Reading data from card...")
     
     try:
-        # Read block 4 (NDEF data) using custom NTAG read method
-        block4 = read_ntag_block(reader, 4)
+        # Read block 4 (NDEF data) using NTAG read method
+        block4 = reader.NTAG_Read(4)
         if not block4 or len(block4) < 8:
             print("✗ Failed to read block 4 or insufficient data")
             return None
@@ -203,7 +166,7 @@ def read_string_from_card(reader, uid):
         
         # If text continues in block 5
         if text_length > 8:
-            block5 = read_ntag_block(reader, 5)
+            block5 = reader.NTAG_Read(5)
             if block5 and len(block5) >= min(text_length - 8, 16):
                 print(f"Block 5: {' '.join([f'{b:02X}' for b in block5])}")
                 for i in range(min(text_length - 8, len(block5))):
@@ -223,39 +186,6 @@ def read_string_from_card(reader, uid):
             
     except Exception as e:
         print(f"Error in read_string_from_card: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-def read_ntag_block(reader, block_addr):
-    """Read a block from NTAG card using direct commands"""
-    try:
-        # NTAG read command: 0x30 (PICC_READ)
-        buff = []
-        buff.append(0x30)  # NTAG read command
-        buff.append(block_addr)
-        
-        # Calculate CRC for the command
-        crc = reader.CalulateCRC(buff)
-        buff.append(crc[0])
-        buff.append(crc[1])
-        
-        print(f"Sending NTAG read command: {' '.join([f'{b:02X}' for b in buff])}")
-        
-        # Send the command
-        (status, backData, backLen) = reader.MFRC522_ToCard(reader.PCD_TRANSCEIVE, buff)
-        
-        print(f"NTAG read response: status={status}, backLen={backLen}, dataLen={len(backData) if backData else 0}")
-        
-        if status == reader.MI_OK and len(backData) == 16:
-            return backData
-        else:
-            print(f"NTAG read failed: status={status}, backLen={backLen}, dataLen={len(backData) if backData else 0}")
-            return None
-            
-    except Exception as e:
-        print(f"Error in read_ntag_block: {e}")
         import traceback
         traceback.print_exc()
         return None
