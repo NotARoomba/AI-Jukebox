@@ -30,11 +30,12 @@ def read_ultralight_tag(reader):
     # Select the tag
     reader.MFRC522_SelectTag(uid)
     
-    # Read data from ultralight pages (starting from page 4)
+    # Read data from ultralight pages (starting from page 4 to avoid reserved pages 0-3)
     data_bytes = []
+    buffer_size = 4  # 4 bytes per page for ultralight tags
     
     # Read up to 32 pages (pages 4-35) - user data area
-    for page_addr in range(4, 36):
+    for page_addr in range(4, 36):  # Start reading from page 4
         # Use the standard read command but handle 4-byte response for ultralight
         recvData = []
         recvData.append(reader.PICC_READ)
@@ -44,9 +45,9 @@ def read_ultralight_tag(reader):
         recvData.append(pOut[1])
         (status, backData, backLen) = reader.MFRC522_ToCard(reader.PCD_TRANSCEIVE, recvData)
         
-        if status == reader.MI_OK and len(backData) >= 4:
-            # For ultralight tags, we get 4 bytes per page
-            page_data = backData[:4]  # Take first 4 bytes
+        if status == reader.MI_OK and len(backData) >= buffer_size:
+            # For ultralight tags, we get exactly 4 bytes per page
+            page_data = backData[:buffer_size]  # Take exactly 4 bytes
             data_bytes.extend(page_data)
         else:
             # If we can't read a page, assume we've reached the end
@@ -97,30 +98,34 @@ def write_ultralight_tag(reader, text):
     
     # Convert text to bytes and pad to 4-byte chunks
     text_bytes = text.encode('ascii')
+    buffer_size = 4  # 4 bytes per page for ultralight tags
     
     # Check if data is too large for ultralight tag (max 36 pages, starting from page 4)
     max_pages = 32  # Pages 4-35 are available for user data
-    required_pages = (len(text_bytes) + 3) // 4  # Round up division
+    required_pages = (len(text_bytes) + buffer_size - 1) // buffer_size  # Round up division
     
     if required_pages > max_pages:
         print(f"Data too large! Need {required_pages} pages but only {max_pages} available.")
-        print(f"Maximum data size: {max_pages * 4} bytes")
+        print(f"Maximum data size: {max_pages * buffer_size} bytes")
         return False
     
-    # Write data to ultralight pages (starting from page 4 to avoid reserved pages)
-    page_addr = 4
+    # Write data to ultralight pages (starting from page 4 to avoid reserved pages 0-3)
+    page_addr = 4  # Start writing from page 4
     bytes_written = 0
     pages_written = 0
     
-    for i in range(0, len(text_bytes), 4):
-        # Get 4 bytes for this page
-        page_data = list(text_bytes[i:i+4])
+    for i in range(0, len(text_bytes), buffer_size):
+        # Get exactly 4 bytes for this page
+        page_data = list(text_bytes[i:i+buffer_size])
         
-        # Pad with zeros if less than 4 bytes
-        while len(page_data) < 4:
+        # Pad with zeros if less than 4 bytes to ensure exact buffer_size
+        while len(page_data) < buffer_size:
             page_data.append(0)
         
-        # Write to ultralight page
+        # Ensure we only write exactly 4 bytes
+        page_data = page_data[:buffer_size]
+        
+        # Write to ultralight page (starting from page 4)
         reader.MFRC522_WriteUltralight(page_addr, page_data)
         
         # Small delay to ensure write completes
@@ -131,7 +136,7 @@ def write_ultralight_tag(reader, text):
         pages_written += 1
         
         # Stop if we've written all the data
-        if i + 4 >= len(text_bytes):
+        if i + buffer_size >= len(text_bytes):
             break
     
     print(f"Written {bytes_written} bytes to {pages_written} pages on ultralight tag")
