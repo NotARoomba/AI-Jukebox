@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 """
 MFRC522 Python Library for Raspberry Pi
@@ -8,10 +8,54 @@ This library provides a Python interface to the MFRC522 RFID/NFC reader module.
 """
 
 import time
-import spidev
-import RPi.GPIO as GPIO
 from enum import IntEnum
 from typing import List, Optional, Tuple, Union
+
+# Try to import Raspberry Pi specific modules
+try:
+    import spidev
+    import RPi.GPIO as GPIO
+    RPI_AVAILABLE = True
+except ImportError:
+    # Mock classes for non-Raspberry Pi systems
+    class MockSpiDev:
+        def __init__(self):
+            pass
+        def open(self, bus, device):
+            pass
+        def close(self):
+            pass
+        def xfer2(self, data):
+            return [0] * len(data)
+    
+    class MockSPI:
+        SpiDev = MockSpiDev
+    
+    class MockGPIO:
+        BCM = "BCM"
+        OUT = "OUT"
+        LOW = 0
+        HIGH = 1
+        
+        @staticmethod
+        def setmode(mode):
+            pass
+        
+        @staticmethod
+        def setup(pin, mode):
+            pass
+        
+        @staticmethod
+        def output(pin, value):
+            pass
+        
+        @staticmethod
+        def cleanup():
+            pass
+    
+    spidev = MockSPI()
+    GPIO = MockGPIO()
+    RPI_AVAILABLE = False
 
 
 class PCD_Register(IntEnum):
@@ -252,14 +296,14 @@ class MFRC522:
         Returns:
             Tuple of (CRC high byte, CRC low byte)
         """
-        self.PCD_WriteRegister(PCD_Register.CommandReg, PCD_Command.PCD_IDLE)
+        self.PCD_WriteRegister(PCD_Register.CommandReg, 0x00)  # PCD_IDLE
         self.PCD_WriteRegister(PCD_Register.DivIrqReg, 0x04)
         self.PCD_WriteRegister(PCD_Register.FIFOLevelReg, 0x80)
         
         for i in range(length):
             self.PCD_WriteRegister(PCD_Register.FIFODataReg, data[i])
         
-        self.PCD_WriteRegister(PCD_Register.CommandReg, PCD_Command.PCD_CALCCRC)
+        self.PCD_WriteRegister(PCD_Register.CommandReg, 0x03)  # PCD_CALCCRC
         
         i = 0xFF
         while True:
@@ -302,7 +346,7 @@ class MFRC522:
     
     def PCD_Reset(self) -> None:
         """Performs a soft reset on the MFRC522"""
-        self.PCD_WriteRegister(PCD_Register.CommandReg, PCD_Command.PCD_RESETPHASE)
+        self.PCD_WriteRegister(PCD_Register.CommandReg, 0x0F)  # PCD_RESETPHASE
     
     def PCD_AntennaOn(self) -> None:
         """Turns the antenna on by enabling pins TX1 and TX2"""
@@ -338,14 +382,14 @@ class MFRC522:
         self.PCD_WriteRegister(PCD_Register.ComIrqReg, 0x7F)
         self.PCD_SetRegisterBitMask(PCD_Register.FIFOLevelReg, 0x80)
         
-        self.PCD_WriteRegister(PCD_Register.CommandReg, PCD_Command.PCD_IDLE)
+        self.PCD_WriteRegister(PCD_Register.CommandReg, 0x00)  # PCD_IDLE
         
         # Writing data to the FIFO
         for i in range(send_len):
             self.PCD_WriteRegister(PCD_Register.FIFODataReg, send_data[i])
         
         # Execute the command
-        self.PCD_WriteRegister(PCD_Register.CommandReg, PCD_Command.PCD_TRANSCEIVE)
+        self.PCD_WriteRegister(PCD_Register.CommandReg, 0x0C)  # PCD_TRANSCEIVE
         self.PCD_SetRegisterBitMask(PCD_Register.BitFramingReg, 0x80)
         
         # Wait for the command to complete
@@ -417,10 +461,10 @@ class MFRC522:
             STATUS_OK on success, STATUS_??? otherwise.
         """
         buffer_size[0] = 2
-        buffer_atqa[0] = PICC_Command.PICC_CMD_REQA
-        return self.PICC_REQA_or_WUPA(buffer_atqa, buffer_size)
+        buffer_atqa[0] = 0x26  # PICC_CMD_REQA
+        return self.PICC_REQA_or_WUPA(0x26, buffer_atqa, buffer_size)
     
-    def PICC_REQA_or_WUPA(self, command: PICC_Command, buffer_atqa: List[int], 
+    def PICC_REQA_or_WUPA(self, command: int, buffer_atqa: List[int], 
                          buffer_size: List[int]) -> StatusCode:
         """
         Transmits REQA or WUPA commands.
@@ -490,7 +534,7 @@ class MFRC522:
         Returns:
             STATUS_OK on success, STATUS_??? otherwise.
         """
-        buffer = [PICC_Command.PICC_CMD_HLTA, 0]
+        buffer = [0x50, 0]  # PICC_CMD_HLTA
         back_data = [0] * 1
         back_len = [0]
         
@@ -596,7 +640,7 @@ class MFRC522:
             StatusCode indicating success or failure
         """
         buffer_size[0] = 18
-        buffer[0] = PICC_Command.PICC_CMD_MF_READ
+        buffer[0] = 0x30  # PICC_CMD_MF_READ
         buffer[1] = block_addr
         
         # Calculate CRC_A
@@ -634,7 +678,7 @@ class MFRC522:
             return StatusCode.STATUS_INVALID
         
         # Prepare the command
-        send_data = [PICC_Command.PICC_CMD_MF_WRITE, block_addr]
+        send_data = [0xA0, block_addr]  # PICC_CMD_MF_WRITE
         
         # Calculate CRC_A
         crc_high, crc_low = self.PCD_CalculateCRC(send_data, 2)
