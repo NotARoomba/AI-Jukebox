@@ -10,25 +10,14 @@ def read_ntag215_tag(reader):
     """Read data from an NTAG215 tag"""
     print("Waiting for NTAG215 tag to read...")
     
-    # Wait for card detection (single attempt)
+    # Use the robust detection method
     while True:
-        (status, back_bits) = reader.request(reader.PICC_REQIDL)
-        if status == reader.MI_OK:
-            print("Card detected!")
+        (success, uid) = reader.detect_ntag215()
+        if success:
+            print(f"Card detected! UID: {uid}")
             break
         print("Waiting for card...")
         time.sleep(0.1)
-    
-    # Get UID
-    (status, uid) = reader.anticoll()
-    if status != reader.MI_OK:
-        print("Failed to get UID")
-        return None, None
-    
-    print(f"UID: {uid}")
-    
-    # Select the tag
-    reader.select_tag(uid)
     
     # Read data from NTAG215 pages (starting from page 4 to avoid reserved pages 0-3)
     data_bytes = reader.read_ntag215_data(start_page=4, end_page=35)
@@ -68,25 +57,14 @@ def write_ntag215_tag(reader, text):
     
     print("Now place your NTAG215 tag to write")
     
-    # Wait for card detection
+    # Use the robust detection method
     while True:
-        (status, back_bits) = reader.request(reader.PICC_REQIDL)
-        if status == reader.MI_OK:
-            print("Card detected!")
+        (success, uid) = reader.detect_ntag215()
+        if success:
+            print(f"Card detected! UID: {uid}")
             break
         print("Waiting for card...")
         time.sleep(0.1)
-    
-    # Get UID
-    (status, uid) = reader.anticoll()
-    if status != reader.MI_OK:
-        print("Failed to get UID")
-        return False
-    
-    print(f"UID: {uid}")
-    
-    # Select the tag
-    reader.select_tag(uid)
     
     # Clear the card before writing
     clear_ntag215_tag(reader)

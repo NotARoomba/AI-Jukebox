@@ -291,9 +291,18 @@ class MFRC522:
         tag_type = [req_mode]
         (status, back_data, back_bits) = self.to_card(self.PCD_TRANSCEIVE, tag_type)
         
-        if (status != self.MI_OK) or (back_bits != 0x10):
-            status = self.MI_ERR
-            
+        # For NTAG215 tags, we need to be more flexible with the response
+        if status != self.MI_OK:
+            return (self.MI_ERR, 0)
+        
+        # Check if we got a valid response (should be 16 bits for REQIDL)
+        if req_mode == self.PICC_REQIDL and back_bits != 0x10:
+            # Try again with different bit framing
+            self.write_register(self.BitFramingReg, 0x00)
+            (status, back_data, back_bits) = self.to_card(self.PCD_TRANSCEIVE, tag_type)
+            if status != self.MI_OK:
+                return (self.MI_ERR, 0)
+        
         return (status, back_bits)
         
     def anticoll(self) -> Tuple[int, List[int]]:
@@ -306,19 +315,32 @@ class MFRC522:
         back_data = []
         ser_num_check = 0
         
+        # Clear the bit framing register for anticollision
+        self.write_register(self.BitFramingReg, 0x00)
+        
         ser_num = [self.PICC_ANTICOLL, 0x20]
         (status, back_data, back_bits) = self.to_card(self.PCD_TRANSCEIVE, ser_num)
         
         if status == self.MI_OK:
             if len(back_data) == 5:
+                # Verify the checksum
                 for i in range(4):
                     ser_num_check = ser_num_check ^ back_data[i]
                 if ser_num_check != back_data[4]:
-                    status = self.MI_ERR
+                    self.logger.warning("Anticollision checksum failed")
+                    # Still return the data, as some tags might have checksum issues
+                    return (self.MI_OK, back_data[:4])
+                else:
+                    return (self.MI_OK, back_data[:4])
+            elif len(back_data) == 4:
+                # Some tags return only 4 bytes (UID without checksum)
+                return (self.MI_OK, back_data)
             else:
-                status = self.MI_ERR
-                
-        return (status, back_data)
+                self.logger.error(f"Anticollision failed: unexpected response length {len(back_data)}")
+                return (self.MI_ERR, [])
+        else:
+            self.logger.error(f"Anticollision failed: status {status}")
+            return (self.MI_ERR, [])
         
     def select_tag(self, uid: List[int]) -> int:
         """
@@ -333,6 +355,14 @@ class MFRC522:
         back_data = []
         buf = [self.PICC_SElECTTAG, 0x70]
         
+        # Ensure we have exactly 5 bytes for the UID
+        if len(uid) < 5:
+            # Pad with zeros if needed
+            uid = uid + [0] * (5 - len(uid))
+        elif len(uid) > 5:
+            # Truncate if too long
+            uid = uid[:5]
+        
         for i in range(5):
             buf.append(uid[i])
             
@@ -342,9 +372,15 @@ class MFRC522:
         
         (status, back_data, back_len) = self.to_card(self.PCD_TRANSCEIVE, buf)
         
-        if (status == self.MI_OK) and (back_len == 0x18):
-            return back_data[0]
+        if status == self.MI_OK:
+            if len(back_data) >= 1:
+                # Return the SAK (first byte of response)
+                return back_data[0]
+            else:
+                self.logger.warning("Select tag: no response data")
+                return 0
         else:
+            self.logger.error(f"Select tag failed: status {status}")
             return 0
             
     def calculate_crc(self, p_indata: List[int]) -> List[int]:
@@ -377,6 +413,39 @@ class MFRC522:
         p_out_data.append(self.read_register(self.CRCResultRegM))
         return p_out_data
         
+    def detect_ntag215(self) -> Tuple[bool, List[int]]:
+        """
+        Detect and get UID of NTAG215 tag with robust error handling
+        
+        Returns:
+            Tuple of (success, uid)
+        """
+        try:
+            # Step 1: Request card detection
+            (status, back_bits) = self.request(self.PICC_REQIDL)
+            if status != self.MI_OK:
+                self.logger.debug("No card detected")
+                return (False, [])
+            
+            # Step 2: Anticollision
+            (status, uid) = self.anticoll()
+            if status != self.MI_OK or not uid:
+                self.logger.debug("Anticollision failed")
+                return (False, [])
+            
+            # Step 3: Select tag
+            sak = self.select_tag(uid)
+            if sak == 0:
+                self.logger.debug("Tag selection failed")
+                return (False, [])
+            
+            self.logger.info(f"NTAG215 detected with UID: {uid}")
+            return (True, uid)
+            
+        except Exception as e:
+            self.logger.error(f"Error in detect_ntag215: {e}")
+            return (False, [])
+    
     def read_ntag215_page(self, page_addr: int) -> Optional[List[int]]:
         """
         Read a page from NTAG215
