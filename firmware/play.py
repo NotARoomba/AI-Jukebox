@@ -211,12 +211,12 @@ def play_audio_url(audio_url, volume_percent=None):
                 print("Rewind 10s")
                 time.sleep(0.3)  # debounce
 
-            if GPIO.input(PIN_FORWARD) == GPIO.HIGH:
-                current_time = player.get_time()
-                length = player.get_length()
-                player.set_time(min(current_time + 10000, length))
-                print("Forward 10s")
-                time.sleep(0.3)  # debounce
+            # if GPIO.input(PIN_FORWARD) == GPIO.HIGH:
+            #     current_time = player.get_time()
+            #     length = player.get_length()
+            #     player.set_time(min(current_time + 10000, length))
+            #     print("Forward 10s")
+            #     time.sleep(0.3)  # debounce
 
             # Volume control buttons
             if GPIO.input(PIN_VOLUME_UP) == GPIO.HIGH:
