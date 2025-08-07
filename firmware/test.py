@@ -359,60 +359,52 @@ def main():
     else:
         print("Read-only mode enabled.")
     
-    print("Press Ctrl+C to exit")
+    print("Waiting for NFC tag...")
     print("-" * 50)
     
     try:
+        # Wait for tag detection
         while True:
-            print("\nWaiting for NFC tag...")
-            
-            # Detect tag
             uid, tag_type = reader.detect_tag()
-            if not uid:
-                time.sleep(0.1)
-                continue
-            
-            uid_str = ''.join([f'{b:02X}' for b in uid])
-            print(f"✓ Tag detected (UID: {uid_str})")
-            
-            if args.write:
-                # Write mode
-                print(f"Writing '{args.write}' to tag...")
-                if args.type == 'text':
-                    success = reader.write_text_record(uid, args.write, args.language)
-                elif args.type == 'url':
-                    success = reader.write_url_record(uid, args.write)
-                else:
-                    success = reader.write_text_record(uid, args.write)
-                
-                if success:
-                    print(f"✓ Successfully wrote {args.type} record to tag")
-                else:
-                    print(f"✗ Failed to write to tag")
-            
-            # Read mode
-            print("Reading NDEF records...")
-            records = reader.read_ndef_records(uid)
-            
-            if records:
-                print(f"✓ Found {len(records)} NDEF record(s):")
-                for i, record in enumerate(records, 1):
-                    print(f"  Record {i}: {record}")
+            if uid:
+                break
+            time.sleep(0.1)
+        
+        uid_str = ''.join([f'{b:02X}' for b in uid])
+        print(f"✓ Tag detected (UID: {uid_str})")
+        
+        if args.write:
+            # Write mode
+            print(f"Writing '{args.write}' to tag...")
+            if args.type == 'text':
+                success = reader.write_text_record(uid, args.write, args.language)
+            elif args.type == 'url':
+                success = reader.write_url_record(uid, args.write)
             else:
-                print("✓ Tag detected but no NDEF records found")
+                success = reader.write_text_record(uid, args.write)
             
-            print("\n" + "="*50)
-            print("Remove tag to continue...")
-            
-            # Wait for tag to be removed
-            while True:
-                uid_check, _ = reader.detect_tag()
-                if not uid_check:
-                    break
-                time.sleep(0.1)
-            
+            if success:
+                print(f"✓ Successfully wrote {args.type} record to tag")
+            else:
+                print(f"✗ Failed to write to tag")
+        
+        # Read mode
+        print("Reading NDEF records...")
+        records = reader.read_ndef_records(uid)
+        
+        if records:
+            print(f"✓ Found {len(records)} NDEF record(s):")
+            for i, record in enumerate(records, 1):
+                print(f"  Record {i}: {record}")
+        else:
+            print("✓ Tag detected but no NDEF records found")
+        
+        print("\n" + "="*50)
+        print("Processing complete. Exiting...")
+        
     except KeyboardInterrupt:
         print("\n\nExiting...")
+    finally:
         print("Cleaning up GPIO...")
         GPIO.cleanup()
         print("Done!")
