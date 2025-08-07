@@ -267,8 +267,8 @@ def main():
 
     print("Initializing MFRC522...")
     reader = MFRC522(bus=0, device=0, spd=1000000, pin_mode=10, pin_rst=22)
-    # Turn on verbose debug in the library
-    reader.DEBUG = True
+    # Disable verbose debug in the library
+    reader.DEBUG = False
     print("✓ MFRC522 initialized successfully with updated pin configuration")
     print("✓ Hardware reset pin (GPIO 22) configured and tested")
 
