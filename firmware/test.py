@@ -139,7 +139,9 @@ class NDEFReader:
     def read_ntag_block(self, block_addr: int) -> bytes:
         """Read a block from NTAG tag using the correct command"""
         try:
-            # NTAG uses command 0x30 (READ) with 2-byte address
+            # NTAG uses command 0x30 (READ) with 1-byte address
+            # The command format is: [0x30, block_addr]
+            # NTAG tags don't require authentication or CRC
             command = [0x30, block_addr]
             (status, backData, backLen) = self.reader.MFRC522_ToCard(self.reader.PCD_TRANSCEIVE, command)
             
@@ -152,22 +154,48 @@ class NDEFReader:
             print(f"Error reading NTAG block {block_addr}: {e}")
             return None
 
+    def read_ntag_block_simple(self, block_addr: int) -> bytes:
+        """Read a block from NTAG tag using a simpler approach"""
+        try:
+            # For NTAG tags, we can try a direct approach without CRC
+            # Send: [0x30, block_addr] and expect 16 bytes back
+            command = [0x30, block_addr]
+            
+            # Use the lower-level MFRC522_ToCard method directly
+            (status, backData, backLen) = self.reader.MFRC522_ToCard(self.reader.PCD_TRANSCEIVE, command)
+            
+            if status == self.reader.MI_OK and backData and len(backData) == 16:
+                return bytes(backData)
+            else:
+                print(f"Simple read failed for block {block_addr}: status={status}, len={len(backData) if backData else 0}")
+                return None
+        except Exception as e:
+            print(f"Error in simple NTAG read for block {block_addr}: {e}")
+            return None
+
     def read_ndef_records(self, uid: bytes) -> List[NDEFRecord]:
         """Read NDEF records from the tag"""
         if not uid or len(uid) != 5:
             print(f"Invalid UID: {uid}")
             return []
         
+        print(f"Attempting to read from tag with UID: {uid.hex().upper()}")
+        
         # Select the tag
         status = self.reader.MFRC522_SelectTag(uid)
         if status != self.reader.MI_OK:
-            print("Failed to select tag, trying alternative approach...")
+            print(f"Failed to select tag (status={status}), trying alternative approach...")
             # Try to re-select the tag
             time.sleep(0.1)
             status = self.reader.MFRC522_SelectTag(uid)
             if status != self.reader.MI_OK:
-                print("Still failed to select tag")
-                return []
+                print(f"Still failed to select tag (status={status})")
+                # Try to continue anyway - some NTAG tags might work without proper selection
+                print("Continuing with reading attempt anyway...")
+            else:
+                print("Tag selection successful on second attempt")
+        else:
+            print("Tag selection successful")
         
         # Read all sectors until we hit null data for debugging
         print("\n" + "="*60)
@@ -180,13 +208,26 @@ class NDEFReader:
         
         for block_addr in range(max_sectors):
             try:
-                # Try custom NTAG reading first
-                block_data = self.read_ntag_block(block_addr)
-                if not block_data:
-                    # Fallback to standard MFRC522_Read
-                    block_data = self.reader.MFRC522_Read(block_addr)
+                # Try multiple reading approaches for NTAG tags
+                block_data = None
+                
+                # Approach 1: Try standard MFRC522_Read (might work for some NTAG tags)
+                block_data = self.reader.MFRC522_Read(block_addr)
+                if block_data:
+                    block_data = bytes(block_data)
+                    print(f"Block {block_addr:02d}: Standard read successful")
+                else:
+                    # Approach 2: Try custom NTAG reading
+                    print(f"Standard read failed for block {block_addr}, trying custom NTAG read...")
+                    block_data = self.read_ntag_block(block_addr)
                     if block_data:
-                        block_data = bytes(block_data)
+                        print(f"Block {block_addr:02d}: Custom NTAG read successful")
+                    else:
+                        # Approach 3: Try simple NTAG reading
+                        print(f"Custom NTAG read failed for block {block_addr}, trying simple NTAG read...")
+                        block_data = self.read_ntag_block_simple(block_addr)
+                        if block_data:
+                            print(f"Block {block_addr:02d}: Simple NTAG read successful")
                 
                 if block_data and len(block_data) == 16:
                     # Check if this block is all null/zero data
