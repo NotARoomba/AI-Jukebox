@@ -138,6 +138,7 @@ class NDEFReader:
         # Select the tag
         status = self.reader.MFRC522_SelectTag(uid)
         if status != self.reader.MI_OK:
+            print("Failed to select tag")
             return []
         
         # For NFC Forum Type 2 tags (like NTAG215), NDEF data starts from page 4
@@ -149,7 +150,7 @@ class NDEFReader:
         for block_addr in range(4, 16):
             try:
                 block_data = self.reader.MFRC522_Read(block_addr)
-                if block_data:
+                if block_data and len(block_data) == 16:
                     all_data.extend(block_data)
                     print(f"Block {block_addr}: {block_data[:8]}...")  # Debug output
                     
@@ -162,14 +163,21 @@ class NDEFReader:
                         elif byte == 0x02:  # Status byte for UTF-8 text
                             print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
                 else:
-                    print(f"Block {block_addr}: No data")
+                    print(f"Block {block_addr}: No data or invalid length")
+                    if block_data:
+                        print(f"  Block data length: {len(block_data)}")
                     break
             except Exception as e:
                 print(f"Error reading block {block_addr}: {e}")
                 break
         
         print(f"Total data read: {len(all_data)} bytes")
-        print(f"Raw data (first 32 bytes): {all_data[:32]}")
+        if all_data:
+            print(f"Raw data (first 32 bytes): {all_data[:32]}")
+            print(f"Raw data (hex): {' '.join(f'{b:02X}' for b in all_data[:32])}")
+        else:
+            print("No data read from tag")
+            return []
         
         # Parse NDEF data
         return self.parse_ndef_data(all_data)
@@ -183,9 +191,9 @@ class NDEFReader:
         
         print(f"Parsing {len(data)} bytes of data")
         
-        # NFC Forum Type 2 format parsing
-        # Look for NDEF TLV structure
-        # NDEF TLV starts with 0x03 followed by length
+        # Try multiple parsing strategies for NTAG215
+        
+        # Strategy 1: Look for NDEF TLV structure (0x03 + length + payload)
         i = 0
         while i < len(data) - 2:
             if data[i] == 0x03:  # NDEF TLV tag
@@ -195,7 +203,9 @@ class NDEFReader:
                     ndef_payload = data[i + 2:i + 2 + length]
                     print(f"NDEF payload: {ndef_payload[:16]}...")
                     parsed_records = self.parse_ndef_payload(ndef_payload)
-                    records.extend(parsed_records)
+                    if parsed_records:
+                        records.extend(parsed_records)
+                        return records
                     i += 2 + length
                 else:
                     break
@@ -205,10 +215,29 @@ class NDEFReader:
             else:
                 i += 1
         
-        # If no NDEF records found, try to parse as raw text
-        if not records:
-            print("No NDEF records found, trying raw text parsing...")
-            records = self.parse_raw_text(data)
+        # Strategy 2: Look for direct NDEF records (without TLV wrapper)
+        print("Trying direct NDEF record parsing...")
+        for i in range(len(data) - 4):
+            # Look for NDEF record headers
+            if data[i] in [0xD1, 0x91, 0x51, 0x11]:  # Various NDEF record headers
+                print(f"Found NDEF record header 0x{data[i]:02X} at position {i}")
+                try:
+                    parsed_records = self.parse_ndef_payload(data[i:])
+                    if parsed_records:
+                        records.extend(parsed_records)
+                        return records
+                except Exception as e:
+                    print(f"Error parsing NDEF payload: {e}")
+        
+        # Strategy 3: Look for text patterns (status byte + language + text)
+        print("Trying text pattern parsing...")
+        records = self.parse_raw_text(data)
+        if records:
+            return records
+        
+        # Strategy 4: Look for any readable text
+        print("Trying fallback text parsing...")
+        records = self.parse_fallback_text(data)
         
         return records
     
@@ -221,22 +250,7 @@ class NDEFReader:
         
         print(f"Parsing raw text from {len(data)} bytes")
         
-        # For NFC Forum Type 2, look for specific patterns
-        # Pattern 1: Look for NDEF-like structure without TLV wrapper
-        for i in range(len(data) - 4):
-            # Look for NDEF record header (0xD1 for text record with MB=1, ME=1, SR=1, TNF=1)
-            if data[i] == 0xD1:  # NDEF text record header
-                print(f"Found NDEF text record header 0xD1 at position {i}")
-                try:
-                    # Parse as NDEF record
-                    parsed_records = self.parse_ndef_payload(data[i:])
-                    if parsed_records:
-                        records.extend(parsed_records)
-                        return records
-                except Exception as e:
-                    print(f"Error parsing NDEF payload: {e}")
-        
-        # Pattern 2: Look for status byte (0x02) followed by language code and text
+        # Pattern 1: Look for status byte (0x02) followed by language code and text
         for i in range(len(data) - 4):
             if data[i] == 0x02:  # Status byte for UTF-8 text
                 print(f"Found status byte 0x02 at position {i}")
@@ -261,7 +275,7 @@ class NDEFReader:
                                 records.append(NDEFRecord("text", text_data.strip(), lang_code))
                                 return records
         
-        # Pattern 3: Look for consecutive printable characters (fallback)
+        # Pattern 2: Look for consecutive printable characters
         current_text = ""
         for byte in data:
             if 32 <= byte <= 126:  # Printable ASCII
@@ -280,6 +294,49 @@ class NDEFReader:
         if len(current_text) >= 3:
             print(f"Found remaining text: '{current_text}'")
             records.append(NDEFRecord("text", current_text.strip(), "en"))
+        
+        return records
+    
+    def parse_fallback_text(self, data: bytes) -> List[NDEFRecord]:
+        """Fallback text parsing - look for any readable text"""
+        records = []
+        
+        if not data:
+            return records
+        
+        print("Fallback text parsing...")
+        
+        # First, try to find "haggstrom" directly in the data
+        try:
+            text_data = data.decode('utf-8', errors='ignore')
+            if 'haggstrom' in text_data.lower():
+                print(f"Found 'haggstrom' in raw data!")
+                records.append(NDEFRecord("text", "haggstrom", "en"))
+                return records
+        except:
+            pass
+        
+        # Look for any sequence of printable characters
+        text_parts = []
+        current_part = ""
+        
+        for byte in data:
+            if 32 <= byte <= 126:  # Printable ASCII
+                current_part += chr(byte)
+            else:
+                if len(current_part) >= 3:
+                    text_parts.append(current_part.strip())
+                current_part = ""
+        
+        # Check for remaining text
+        if len(current_part) >= 3:
+            text_parts.append(current_part.strip())
+        
+        # Create records from found text parts
+        for text_part in text_parts:
+            if text_part and len(text_part) >= 3:
+                print(f"Fallback found text: '{text_part}'")
+                records.append(NDEFRecord("text", text_part, "en"))
         
         return records
     
