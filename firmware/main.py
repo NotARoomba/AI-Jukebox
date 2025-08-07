@@ -112,6 +112,7 @@ def main():
     try:
         while True:
             id, text = reader.read()
+            
 
             print(f"ID: {id}, Text: {text.strip()}")
             if text.startswith('m_'):
