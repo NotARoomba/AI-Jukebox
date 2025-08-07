@@ -69,23 +69,15 @@ def get_volume():
     except Exception:
         return None
 
-def play_audio_url(audio_url, volume_percent=None):
+def create_player(audio_url):
     print(f"Playing: {audio_url}")
     if audio_url.startswith('audio/') and not os.path.exists(audio_url):
         print(f"Audio file not found: {audio_url}")
-        return
-    set_volume(volume_percent if volume_percent is not None else VOLUME)
+        return None
+    set_volume(VOLUME)
     player = vlc.MediaPlayer(audio_url)
     player.play()
-    try:
-        while True:
-            state = player.get_state()
-            if state in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error):
-                break
-            time.sleep(0.1)
-    finally:
-        player.stop()
-        player.release()
+    return player
 
 def read_text_from_tag(reader):
     # Read NDEF Text record payload using same logic verified in test.py
@@ -187,58 +179,125 @@ def main():
     print("✓ MFRC522 ready")
 
     last_uid = None
+    current_uid = None
+    player = None
+    playlist = []  # pending urls for AI two-part playback
+    current_track_url = None
     try:
         print("Place an NFC card on the reader... Press Ctrl+C to exit")
         while True:
-            (status, TagType) = reader.request(reader.REQIDL)
-            if status != reader.OK:
-                time.sleep(0.05)
+            # Poll for tag presence
+            present_status, _ = reader.request(reader.REQIDL)
+            if present_status != reader.OK:
+                # No tag present
+                if current_uid is not None:
+                    # Tag removed: stop playback
+                    print("Tag removed. Stopping playback.")
+                    if player is not None:
+                        try:
+                            player.stop()
+                            player.release()
+                        except Exception:
+                            pass
+                        player = None
+                    playlist = []
+                    current_track_url = None
+                    current_uid = None
+                time.sleep(0.1)
                 continue
 
+            # Tag present, get UID
             status, uid = reader.SelectTagSN()
             if status != reader.OK:
                 time.sleep(0.05)
                 continue
 
             uid_str = ''.join([f'{b:02X}' for b in uid])
-            if uid_str == last_uid:
-                time.sleep(0.2)
-                continue
-            last_uid = uid_str
-            print(f"Card UID: {uid_str}")
 
-            text = read_text_from_tag(reader)
-            if not text:
-                print("No readable NDEF text on tag")
-                continue
-            print(f"Tag text: {text}")
+            # If new tag detected
+            if uid_str != current_uid:
+                current_uid = uid_str
+                last_uid = uid_str
+                print(f"Card UID: {uid_str}")
 
-            song_type, song_data = process_text_payload(text)
-            if song_type == 'minecraft':
-                audio_path = f"audio/{song_data}.mp3"
-                print(f"Playing Minecraft: {song_data}")
-                play_audio_url(audio_path, VOLUME)
-            elif song_type == 'ai':
-                mask = song_data
-                moods = extract_flags(mask)
-                print(f"Generating AI track with moods: {', '.join(moods)}")
-                data = generate_audio_by_prompt({
-                    "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
-                    "make_instrumental": True,
-                    "wait_audio": False
-                })
-                ids = f"{data[0]['id']},{data[1]['id']}"
-                for _ in range(60):
-                    info = get_audio_information(ids)
-                    if info[0]["status"] == 'streaming':
-                        play_audio_url(info[0]["audio_url"], VOLUME)
-                        play_audio_url(info[1]["audio_url"], VOLUME)
-                        break
-                    time.sleep(5)
+                # Stop existing playback when switching tags
+                if player is not None:
+                    try:
+                        player.stop()
+                        player.release()
+                    except Exception:
+                        pass
+                    player = None
+                playlist = []
+                current_track_url = None
+
+                text = read_text_from_tag(reader)
+                if not text:
+                    print("No readable NDEF text on tag")
+                    continue
+                print(f"Tag text: {text}")
+
+                song_type, song_data = process_text_payload(text)
+                if song_type == 'minecraft':
+                    audio_path = f"audio/{song_data}.mp3"
+                    print(f"Playing Minecraft: {song_data}")
+                    player = create_player(audio_path)
+                    current_track_url = audio_path if player else None
+                elif song_type == 'ai':
+                    mask = song_data
+                    moods = extract_flags(mask)
+                    print(f"Generating AI track with moods: {', '.join(moods)}")
+                    data = generate_audio_by_prompt({
+                        "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
+                        "make_instrumental": True,
+                        "wait_audio": False
+                    })
+                    ids = f"{data[0]['id']},{data[1]['id']}"
+                    # Wait until streaming, but abort if tag leaves or changes
+                    ready_urls = None
+                    for _ in range(60):
+                        # Abort if tag removed or changed
+                        st, _ = reader.request(reader.REQIDL)
+                        if st != reader.OK:
+                            print("Tag removed during AI generation; aborting.")
+                            current_uid = None
+                            break
+                        s2, uid2 = reader.SelectTagSN()
+                        if s2 != reader.OK or ''.join([f'{b:02X}' for b in uid2]) != uid_str:
+                            print("Different tag detected during AI generation; aborting.")
+                            break
+                        info = get_audio_information(ids)
+                        if info[0]["status"] == 'streaming':
+                            ready_urls = [info[0]["audio_url"], info[1]["audio_url"]]
+                            break
+                        time.sleep(5)
+                    if ready_urls:
+                        playlist = ready_urls
+                        # Start first
+                        player = create_player(playlist[0])
+                        current_track_url = playlist[0]
+                        # Keep remaining for later
+                        playlist = playlist[1:]
+                else:
+                    print("Unknown tag format. Expected 'm_<name>' or 'a_<hexFlags>'.")
+
             else:
-                print("Unknown tag format. Expected 'm_<name>' or 'a_<hexFlags>'.")
+                # Same tag still present; if track ended, advance playlist
+                if player is not None:
+                    state = player.get_state()
+                    if state in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error):
+                        try:
+                            player.stop()
+                            player.release()
+                        except Exception:
+                            pass
+                        player = None
+                        if playlist:
+                            next_url = playlist.pop(0)
+                            player = create_player(next_url)
+                            current_track_url = next_url
 
-            time.sleep(0.2)
+            time.sleep(0.1)
     except KeyboardInterrupt:
         pass
     finally:
