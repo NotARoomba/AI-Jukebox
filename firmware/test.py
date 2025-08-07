@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import RPi.GPIO as GPIO
-from mfrc522 import MFRC522, NTAGType
+from mfrc522 import MFRC522, NTAGType, NDEFRecord
 import time
 import sys
 import argparse
@@ -24,7 +24,24 @@ def read_ntag_tag(reader):
     ntag_info = reader.get_ntag_info(ntag_type)
     print(f"NTAG Info: {ntag_info['name']} - {ntag_info['user_bytes']} bytes available")
     
-    # Read data from NTAG pages
+    # Try to read NDEF records first
+    ndef_records = reader.read_ndef_records(ntag_type)
+    if ndef_records:
+        print(f"Found {len(ndef_records)} NDEF record(s):")
+        text_data = ""
+        for i, record in enumerate(ndef_records):
+            print(f"  Record {i+1}: {record.record_type} - {record.payload}")
+            if record.record_type == "text":
+                text_data += record.payload
+            elif record.record_type == "url":
+                text_data += record.payload
+            else:
+                text_data += record.payload
+        
+        if text_data:
+            return uid, text_data, ntag_type
+    
+    # Fallback to raw data reading
     data_bytes = reader.read_ntag_data(ntag_type)
     
     if data_bytes:
@@ -55,8 +72,8 @@ def clear_ntag_tag(reader, ntag_type):
     
     return success
 
-def write_ntag_tag(reader, text):
-    """Write data to any NTAG tag"""
+def write_ntag_tag(reader, text, record_type="text"):
+    """Write data to any NTAG tag as NDEF record"""
     if not text:
         print("No data provided, exiting...")
         return False
@@ -80,20 +97,20 @@ def write_ntag_tag(reader, text):
     # Clear the card before writing
     clear_ntag_tag(reader, ntag_type)
     
-    # Convert text to bytes
-    text_bytes = list(text.encode('ascii'))
-    
-    # Check if data is too large for the NTAG tag
-    max_bytes = ntag_info['user_bytes']
-    if len(text_bytes) > max_bytes:
-        print(f"Data too large! Need {len(text_bytes)} bytes but only {max_bytes} available.")
-        return False
-    
-    # Write data to NTAG pages
-    success = reader.write_ntag_data(text_bytes, ntag_type)
+    # Write as NDEF record
+    if record_type == "text":
+        success = reader.write_ndef_text(text, ntag_type)
+    elif record_type == "url":
+        success = reader.write_ndef_url(text, ntag_type)
+    else:
+        # Create custom NDEF record
+        record = NDEFRecord(record_type, text)
+        record.mb = True
+        record.me = True
+        success = reader.write_ndef_records([record], ntag_type)
     
     if success:
-        print(f"Written {len(text_bytes)} bytes to {ntag_type.name} tag")
+        print(f"Written {record_type} NDEF record to {ntag_type.name} tag")
         print("NTAG tag write completed!")
         return True
     else:
@@ -101,9 +118,11 @@ def write_ntag_tag(reader, text):
         return False
 
 def main():
-    parser = argparse.ArgumentParser(description='NTAG NFC tag reader/writer (supports all NTAG types)')
+    parser = argparse.ArgumentParser(description='NTAG NFC tag reader/writer with NDEF support (supports all NTAG types)')
     parser.add_argument('-w', '--write', type=str, help='Data to write to the tag')
+    parser.add_argument('-t', '--type', type=str, default='text', choices=['text', 'url', 'uri'], help='Type of NDEF record to write (default: text)')
     parser.add_argument('-i', '--info', action='store_true', help='Show NTAG type information')
+    parser.add_argument('-n', '--ndef', action='store_true', help='Show NDEF record details')
     args = parser.parse_args()
     
     reader = MFRC522()
@@ -111,8 +130,8 @@ def main():
     try:
         if args.write:
             # Write mode - write once
-            print(f"Write mode: '{args.write}'")
-            success = write_ntag_tag(reader, args.write)
+            print(f"Write mode: '{args.write}' as {args.type} NDEF record")
+            success = write_ntag_tag(reader, args.write, args.type)
             if success:
                 print("Write operation completed successfully!")
             else:
@@ -133,6 +152,21 @@ def main():
                     print(f"  User Pages: {ntag_info['user_pages'][0]}-{ntag_info['user_pages'][1]}")
                     print(f"  User Bytes: {ntag_info['user_bytes']}")
                     print(f"  UID Length: {ntag_info['uid_length']}")
+                
+                if args.ndef:
+                    # Show NDEF record details
+                    ndef_records = reader.read_ndef_records(ntag_type)
+                    if ndef_records:
+                        print(f"\nNDEF Records ({len(ndef_records)} found):")
+                        for i, record in enumerate(ndef_records):
+                            print(f"  Record {i+1}:")
+                            print(f"    Type: {record.record_type}")
+                            print(f"    Payload: {record.payload}")
+                            if record.record_type == "text":
+                                print(f"    Language: {record.language}")
+                            print(f"    Flags: MB={record.mb}, ME={record.me}, SR={record.sr}, CF={record.cf}")
+                    else:
+                        print("\nNo NDEF records found")
                 
                 if text:
                     print(f"Data: {text}")

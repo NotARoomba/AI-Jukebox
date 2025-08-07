@@ -7,12 +7,12 @@
 import RPi.GPIO as GPIO
 import time
 from typing import Tuple, List, Dict, Any
-from .MFRC522 import MFRC522, NTAGType
+from .MFRC522 import MFRC522, NTAGType, NDEFRecord
 
 class SimpleMFRC522:
     """
     Simple interface for MFRC522 RFID reader
-    Provides easy-to-use methods for reading and writing NTAG tags
+    Provides easy-to-use methods for reading and writing NTAG tags and NDEF records
     """
     
     def __init__(self, bus=0, device=0, spd=1000000, pin_mode=10, pin_rst=-1):
@@ -43,7 +43,23 @@ class SimpleMFRC522:
                     break
                 time.sleep(0.1)
             
-            # Read data from NTAG pages
+            # Try to read NDEF records first
+            ndef_records = self.reader.read_ndef_records(ntag_type)
+            if ndef_records:
+                # Extract text from NDEF records
+                text_data = ""
+                for record in ndef_records:
+                    if record.record_type == "text":
+                        text_data += record.payload
+                    elif record.record_type == "url":
+                        text_data += record.payload
+                    else:
+                        text_data += record.payload
+                
+                if text_data:
+                    return uid, text_data
+            
+            # Fallback to raw data reading
             data_bytes = self.reader.read_ntag_data(ntag_type)
             
             if data_bytes:
@@ -63,6 +79,29 @@ class SimpleMFRC522:
         except Exception as e:
             print(f"Error reading tag: {e}")
             return [], ""
+    
+    def read_ndef_records(self) -> Tuple[List[int], List[NDEFRecord]]:
+        """
+        Read NDEF records from an NTAG tag
+        
+        Returns:
+            Tuple of (uid, ndef_records)
+        """
+        try:
+            # Wait for card detection
+            while True:
+                (success, uid, ntag_type) = self.reader.detect_ntag()
+                if success:
+                    break
+                time.sleep(0.1)
+            
+            # Read NDEF records
+            ndef_records = self.reader.read_ndef_records(ntag_type)
+            return uid, ndef_records
+                
+        except Exception as e:
+            print(f"Error reading NDEF records: {e}")
+            return [], []
     
     def read_id(self) -> List[int]:
         """
@@ -103,7 +142,7 @@ class SimpleMFRC522:
     
     def write(self, text: str) -> bool:
         """
-        Write text data to an NTAG tag
+        Write text data to an NTAG tag (as NDEF text record)
         
         Args:
             text: Text to write
@@ -119,31 +158,115 @@ class SimpleMFRC522:
                     break
                 time.sleep(0.1)
             
-            # Convert text to bytes
-            text_bytes = list(text.encode('ascii'))
-            
-            # Check if data is too large for the NTAG tag
-            ntag_info = self.reader.get_ntag_info(ntag_type)
-            max_bytes = ntag_info['user_bytes']
-            if len(text_bytes) > max_bytes:
-                print(f"Data too large! Need {len(text_bytes)} bytes but only {max_bytes} available.")
-                return False
-            
-            # Clear the card before writing
-            self.reader.clear_ntag_data(ntag_type)
-            
-            # Write data to NTAG pages
-            success = self.reader.write_ntag_data(text_bytes, ntag_type)
+            # Write as NDEF text record
+            success = self.reader.write_ndef_text(text, ntag_type)
             
             if success:
-                print(f"Written {len(text_bytes)} bytes to {ntag_type.name} tag")
+                print(f"Written text NDEF record to {ntag_type.name} tag")
                 return True
             else:
-                print("Failed to write to NTAG tag")
+                print("Failed to write NDEF text record")
                 return False
                 
         except Exception as e:
             print(f"Error writing to tag: {e}")
+            return False
+    
+    def write_ndef_text(self, text: str, language: str = "en") -> bool:
+        """
+        Write a text NDEF record to an NTAG tag
+        
+        Args:
+            text: Text to write
+            language: Language code (default: "en")
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Wait for card detection
+            while True:
+                (success, uid, ntag_type) = self.reader.detect_ntag()
+                if success:
+                    break
+                time.sleep(0.1)
+            
+            # Write NDEF text record
+            success = self.reader.write_ndef_text(text, ntag_type, language)
+            
+            if success:
+                print(f"Written text NDEF record to {ntag_type.name} tag")
+                return True
+            else:
+                print("Failed to write NDEF text record")
+                return False
+                
+        except Exception as e:
+            print(f"Error writing NDEF text record: {e}")
+            return False
+    
+    def write_ndef_url(self, url: str) -> bool:
+        """
+        Write a URL NDEF record to an NTAG tag
+        
+        Args:
+            url: URL to write
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Wait for card detection
+            while True:
+                (success, uid, ntag_type) = self.reader.detect_ntag()
+                if success:
+                    break
+                time.sleep(0.1)
+            
+            # Write NDEF URL record
+            success = self.reader.write_ndef_url(url, ntag_type)
+            
+            if success:
+                print(f"Written URL NDEF record to {ntag_type.name} tag")
+                return True
+            else:
+                print("Failed to write NDEF URL record")
+                return False
+                
+        except Exception as e:
+            print(f"Error writing NDEF URL record: {e}")
+            return False
+    
+    def write_ndef_records(self, records: List[NDEFRecord]) -> bool:
+        """
+        Write multiple NDEF records to an NTAG tag
+        
+        Args:
+            records: List of NDEFRecord objects
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Wait for card detection
+            while True:
+                (success, uid, ntag_type) = self.reader.detect_ntag()
+                if success:
+                    break
+                time.sleep(0.1)
+            
+            # Write NDEF records
+            success = self.reader.write_ndef_records(records, ntag_type)
+            
+            if success:
+                print(f"Written {len(records)} NDEF records to {ntag_type.name} tag")
+                return True
+            else:
+                print("Failed to write NDEF records")
+                return False
+                
+        except Exception as e:
+            print(f"Error writing NDEF records: {e}")
             return False
     
     def read_raw(self) -> Tuple[List[int], List[int]]:

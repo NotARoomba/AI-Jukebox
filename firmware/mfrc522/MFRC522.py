@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 #
 # MFRC522 Library for All NTAG Types (NTAG213, NTAG215, NTAG216, etc.)
-# Rewritten from scratch for comprehensive NTAG support
+# Rewritten from scratch for comprehensive NTAG support with NDEF records
 #
 
 import RPi.GPIO as GPIO
@@ -22,10 +22,228 @@ class NTAGType(Enum):
     NTAG215F = 5
     NTAG216F = 6
 
+class NDEFRecord:
+    """NDEF Record class for handling NFC Data Exchange Format records"""
+    
+    def __init__(self, record_type: str = "text", payload: str = "", language: str = "en"):
+        """
+        Initialize NDEF Record
+        
+        Args:
+            record_type: Type of record ("text", "url", "uri", "mime")
+            payload: Payload data
+            language: Language code for text records (default: "en")
+        """
+        self.record_type = record_type
+        self.payload = payload
+        self.language = language
+        self.mb = False  # Message Begin
+        self.me = False  # Message End
+        self.sr = True   # Short Record
+        self.cf = False  # Chunk Flag
+        self.tnf = 0x01  # Type Name Format (NFC Forum well-known type)
+    
+    def to_bytes(self) -> List[int]:
+        """Convert NDEF record to bytes"""
+        if self.record_type == "text":
+            return self._create_text_record()
+        elif self.record_type in ["url", "uri"]:
+            return self._create_url_record()
+        else:
+            return self._create_generic_record()
+    
+    def _create_text_record(self) -> List[int]:
+        """Create a text NDEF record"""
+        # Text record structure:
+        # NDEF Record Header (1 byte)
+        # Type Length (1 byte)
+        # Payload Length (1 byte) - for SR records
+        # Type (2 bytes) - "T"
+        # Status Byte (1 byte) - language code length + encoding
+        # Language Code (2 bytes) - "en"
+        # Text Payload (variable)
+        
+        text_bytes = self.payload.encode('utf-8')
+        lang_bytes = self.language.encode('ascii')
+        
+        # Status byte: bit 7 = UTF-8 (1), bits 6-0 = language code length
+        status_byte = 0x80 | len(lang_bytes)  # UTF-8 + language length
+        
+        # Record header
+        header = 0x00
+        if self.mb:
+            header |= 0x80  # Message Begin
+        if self.me:
+            header |= 0x40  # Message End
+        if self.sr:
+            header |= 0x10  # Short Record
+        if self.cf:
+            header |= 0x20  # Chunk Flag
+        header |= self.tnf  # Type Name Format
+        
+        # Type "T" for text
+        type_bytes = [ord('T')]
+        
+        # Payload: status byte + language + text
+        payload_bytes = [status_byte] + list(lang_bytes) + list(text_bytes)
+        
+        # Build record
+        record = [
+            header,                    # Record header
+            len(type_bytes),           # Type length
+            len(payload_bytes)         # Payload length (for SR)
+        ] + type_bytes + payload_bytes
+        
+        return record
+    
+    def _create_url_record(self) -> List[int]:
+        """Create a URL NDEF record"""
+        # URL record structure:
+        # NDEF Record Header (1 byte)
+        # Type Length (1 byte)
+        # Payload Length (1 byte) - for SR records
+        # Type (1 byte) - "U"
+        # Status Byte (1 byte) - prefix code
+        # URL Payload (variable)
+        
+        url_bytes = self.payload.encode('ascii')
+        
+        # Status byte: prefix code (0x01 = "http://www.")
+        status_byte = 0x01
+        
+        # Record header
+        header = 0x00
+        if self.mb:
+            header |= 0x80  # Message Begin
+        if self.me:
+            header |= 0x40  # Message End
+        if self.sr:
+            header |= 0x10  # Short Record
+        if self.cf:
+            header |= 0x20  # Chunk Flag
+        header |= self.tnf  # Type Name Format
+        
+        # Type "U" for URL
+        type_bytes = [ord('U')]
+        
+        # Payload: status byte + URL
+        payload_bytes = [status_byte] + list(url_bytes)
+        
+        # Build record
+        record = [
+            header,                    # Record header
+            len(type_bytes),           # Type length
+            len(payload_bytes)         # Payload length (for SR)
+        ] + type_bytes + payload_bytes
+        
+        return record
+    
+    def _create_generic_record(self) -> List[int]:
+        """Create a generic NDEF record"""
+        payload_bytes = self.payload.encode('utf-8')
+        
+        # Record header
+        header = 0x00
+        if self.mb:
+            header |= 0x80  # Message Begin
+        if self.me:
+            header |= 0x40  # Message End
+        if self.sr:
+            header |= 0x10  # Short Record
+        if self.cf:
+            header |= 0x20  # Chunk Flag
+        header |= self.tnf  # Type Name Format
+        
+        # Type (use record_type as type)
+        type_bytes = list(self.record_type.encode('ascii'))
+        
+        # Build record
+        record = [
+            header,                    # Record header
+            len(type_bytes),           # Type length
+            len(payload_bytes)         # Payload length (for SR)
+        ] + type_bytes + list(payload_bytes)
+        
+        return record
+    
+    @classmethod
+    def from_bytes(cls, data: List[int]) -> Optional['NDEFRecord']:
+        """Create NDEF record from bytes"""
+        if len(data) < 3:
+            return None
+        
+        header = data[0]
+        type_length = data[1]
+        payload_length = data[2]
+        
+        if len(data) < 3 + type_length + payload_length:
+            return None
+        
+        # Extract type
+        type_start = 3
+        type_end = type_start + type_length
+        record_type = ''.join(chr(b) for b in data[type_start:type_end])
+        
+        # Extract payload
+        payload_start = type_end
+        payload_end = payload_start + payload_length
+        payload_data = data[payload_start:payload_end]
+        
+        # Parse based on type
+        if record_type == 'T':
+            # Text record
+            if len(payload_data) < 1:
+                return None
+            
+            status_byte = payload_data[0]
+            lang_length = status_byte & 0x3F
+            encoding = "utf-8" if (status_byte & 0x80) else "ascii"
+            
+            if len(payload_data) < 1 + lang_length:
+                return None
+            
+            language = ''.join(chr(b) for b in payload_data[1:1+lang_length])
+            text = ''.join(chr(b) for b in payload_data[1+lang_length:])
+            
+            record = cls("text", text, language)
+        elif record_type == 'U':
+            # URL record
+            if len(payload_data) < 1:
+                return None
+            
+            prefix_code = payload_data[0]
+            url = ''.join(chr(b) for b in payload_data[1:])
+            
+            # Add prefix based on code
+            if prefix_code == 0x01:
+                url = "http://www." + url
+            elif prefix_code == 0x02:
+                url = "https://www." + url
+            elif prefix_code == 0x03:
+                url = "http://" + url
+            elif prefix_code == 0x04:
+                url = "https://" + url
+            
+            record = cls("url", url)
+        else:
+            # Generic record
+            payload = ''.join(chr(b) for b in payload_data)
+            record = cls(record_type, payload)
+        
+        # Set flags
+        record.mb = bool(header & 0x80)
+        record.me = bool(header & 0x40)
+        record.sr = bool(header & 0x10)
+        record.cf = bool(header & 0x20)
+        record.tnf = header & 0x07
+        
+        return record
+
 class MFRC522:
     """
     MFRC522 RFID Reader/Writer for All NTAG Types
     Supports NTAG213, NTAG215, NTAG216, NTAG213F, NTAG215F, NTAG216F
+    with NDEF record support
     """
     
     # MFRC522 Register definitions
@@ -114,6 +332,10 @@ class MFRC522:
     MI_OK = 0
     MI_NOTAGERR = 1
     MI_ERR = 2
+    
+    # NDEF constants
+    NDEF_TLV_TAG = 0x03
+    NDEF_TLV_TERMINATOR = 0xFE
     
     # NTAG specifications
     NTAG_SPECS = {
@@ -727,6 +949,271 @@ class MFRC522:
             return {'name': 'Unknown', 'pages': 0, 'user_bytes': 0}
         
         return self.NTAG_SPECS[ntag_type].copy()
+    
+    def read_ndef_records(self, ntag_type: NTAGType) -> List[NDEFRecord]:
+        """
+        Read NDEF records from NTAG
+        
+        Args:
+            ntag_type: NTAG type
+            
+        Returns:
+            List of NDEFRecord objects
+        """
+        if ntag_type == NTAGType.UNKNOWN:
+            self.logger.error("Unknown NTAG type")
+            return []
+        
+        # Read all user data
+        data_bytes = self.read_ntag_data(ntag_type)
+        if not data_bytes:
+            return []
+        
+        # Parse TLV structure to find NDEF data
+        ndef_data = self._extract_ndef_tlv(data_bytes)
+        if not ndef_data:
+            return []
+        
+        # Parse NDEF message
+        return self._parse_ndef_message(ndef_data)
+    
+    def write_ndef_records(self, records: List[NDEFRecord], ntag_type: NTAGType) -> bool:
+        """
+        Write NDEF records to NTAG
+        
+        Args:
+            records: List of NDEFRecord objects
+            ntag_type: NTAG type
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if ntag_type == NTAGType.UNKNOWN:
+            self.logger.error("Unknown NTAG type")
+            return False
+        
+        if not records:
+            self.logger.error("No records to write")
+            return False
+        
+        # Create NDEF message
+        ndef_message = self._create_ndef_message(records)
+        if not ndef_message:
+            self.logger.error("Failed to create NDEF message")
+            return False
+        
+        # Create TLV structure
+        tlv_data = self._create_ndef_tlv(ndef_message)
+        if not tlv_data:
+            self.logger.error("Failed to create TLV structure")
+            return False
+        
+        # Check if data fits in NTAG
+        spec = self.NTAG_SPECS[ntag_type]
+        max_bytes = spec['user_bytes']
+        if len(tlv_data) > max_bytes:
+            self.logger.error(f"NDEF data too large for {ntag_type.name}: {len(tlv_data)} bytes > {max_bytes} bytes")
+            return False
+        
+        # Clear the tag first
+        self.clear_ntag_data(ntag_type)
+        
+        # Write TLV data
+        success = self.write_ntag_data(tlv_data, ntag_type)
+        
+        if success:
+            self.logger.info(f"Written {len(records)} NDEF records to {ntag_type.name}")
+        else:
+            self.logger.error("Failed to write NDEF records")
+        
+        return success
+    
+    def write_ndef_text(self, text: str, ntag_type: NTAGType, language: str = "en") -> bool:
+        """
+        Write a text NDEF record to NTAG
+        
+        Args:
+            text: Text to write
+            ntag_type: NTAG type
+            language: Language code (default: "en")
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        record = NDEFRecord("text", text, language)
+        record.mb = True  # Message Begin
+        record.me = True  # Message End
+        return self.write_ndef_records([record], ntag_type)
+    
+    def write_ndef_url(self, url: str, ntag_type: NTAGType) -> bool:
+        """
+        Write a URL NDEF record to NTAG
+        
+        Args:
+            url: URL to write
+            ntag_type: NTAG type
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        record = NDEFRecord("url", url)
+        record.mb = True  # Message Begin
+        record.me = True  # Message End
+        return self.write_ndef_records([record], ntag_type)
+    
+    def _extract_ndef_tlv(self, data: List[int]) -> Optional[List[int]]:
+        """
+        Extract NDEF data from TLV structure
+        
+        Args:
+            data: Raw data bytes
+            
+        Returns:
+            NDEF data bytes or None if not found
+        """
+        i = 0
+        while i < len(data):
+            if data[i] == self.NDEF_TLV_TAG:
+                # Found NDEF TLV tag
+                if i + 1 < len(data):
+                    length = data[i + 1]
+                    if length == 0xFF:
+                        # Extended length (3 bytes)
+                        if i + 3 < len(data):
+                            length = (data[i + 2] << 8) | data[i + 3]
+                            start = i + 4
+                        else:
+                            return None
+                    else:
+                        # Short length (1 byte)
+                        start = i + 2
+                    
+                    if start + length <= len(data):
+                        return data[start:start + length]
+                    else:
+                        return None
+                else:
+                    return None
+            elif data[i] == self.NDEF_TLV_TERMINATOR:
+                # End of TLV structure
+                break
+            else:
+                # Skip other TLV blocks
+                if i + 1 < len(data):
+                    length = data[i + 1]
+                    if length == 0xFF:
+                        # Extended length
+                        if i + 3 < len(data):
+                            length = (data[i + 2] << 8) | data[i + 3]
+                            i += 4 + length
+                        else:
+                            break
+                    else:
+                        # Short length
+                        i += 2 + length
+                else:
+                    break
+        
+        return None
+    
+    def _create_ndef_tlv(self, ndef_data: List[int]) -> List[int]:
+        """
+        Create TLV structure for NDEF data
+        
+        Args:
+            ndef_data: NDEF message bytes
+            
+        Returns:
+            TLV structure bytes
+        """
+        tlv = []
+        
+        # NDEF TLV tag
+        tlv.append(self.NDEF_TLV_TAG)
+        
+        # Length
+        if len(ndef_data) < 0xFF:
+            tlv.append(len(ndef_data))
+        else:
+            tlv.append(0xFF)
+            tlv.append((len(ndef_data) >> 8) & 0xFF)
+            tlv.append(len(ndef_data) & 0xFF)
+        
+        # NDEF data
+        tlv.extend(ndef_data)
+        
+        # Terminator
+        tlv.append(self.NDEF_TLV_TERMINATOR)
+        
+        return tlv
+    
+    def _create_ndef_message(self, records: List[NDEFRecord]) -> Optional[List[int]]:
+        """
+        Create NDEF message from records
+        
+        Args:
+            records: List of NDEFRecord objects
+            
+        Returns:
+            NDEF message bytes or None if failed
+        """
+        if not records:
+            return None
+        
+        # Set message flags
+        records[0].mb = True  # First record is Message Begin
+        records[-1].me = True  # Last record is Message End
+        
+        # Convert records to bytes
+        message = []
+        for record in records:
+            record_bytes = record.to_bytes()
+            message.extend(record_bytes)
+        
+        return message
+    
+    def _parse_ndef_message(self, ndef_data: List[int]) -> List[NDEFRecord]:
+        """
+        Parse NDEF message into records
+        
+        Args:
+            ndef_data: NDEF message bytes
+            
+        Returns:
+            List of NDEFRecord objects
+        """
+        records = []
+        i = 0
+        
+        while i < len(ndef_data):
+            if i + 2 >= len(ndef_data):
+                break
+            
+            # Parse record header
+            header = ndef_data[i]
+            type_length = ndef_data[i + 1]
+            payload_length = ndef_data[i + 2]
+            
+            # Check if we have enough data
+            if i + 3 + type_length + payload_length > len(ndef_data):
+                break
+            
+            # Extract record data
+            record_data = ndef_data[i:i + 3 + type_length + payload_length]
+            
+            # Create record
+            record = NDEFRecord.from_bytes(record_data)
+            if record:
+                records.append(record)
+            
+            # Move to next record
+            i += 3 + type_length + payload_length
+            
+            # Check if this was the last record
+            if header & 0x40:  # Message End flag
+                break
+        
+        return records
         
     def close(self):
         """Close the MFRC522 and cleanup"""

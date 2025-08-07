@@ -10,7 +10,7 @@ import requests
 
 # Try to import the local mfrc522 library
 try:
-    from mfrc522 import MFRC522, NTAGType, SimpleMFRC522
+    from mfrc522 import MFRC522, NTAGType, NDEFRecord, SimpleMFRC522
     MFRC522_AVAILABLE = True
 except ImportError:
     # Fallback to global mfrc522 if local not available
@@ -264,58 +264,73 @@ def main():
                             last_uid = uid_str
                             continue
                         
-                        # Read data from NTAG pages
-                        data_bytes = reader.read_ntag_data(ntag_type)
+                        # Try to read NDEF records first
+                        ndef_records = reader.read_ndef_records(ntag_type)
+                        text_data = ""
                         
-                        if data_bytes:
-                            # Remove trailing zeros
-                            while data_bytes and data_bytes[-1] == 0:
-                                data_bytes.pop()
+                        if ndef_records:
+                            print(f"Found {len(ndef_records)} NDEF record(s):")
+                            for i, record in enumerate(ndef_records):
+                                print(f"  Record {i+1}: {record.record_type} - {record.payload}")
+                                if record.record_type == "text":
+                                    text_data += record.payload
+                                elif record.record_type == "url":
+                                    text_data += record.payload
+                                else:
+                                    text_data += record.payload
+                        
+                        # If no NDEF records, try raw data
+                        if not text_data:
+                            data_bytes = reader.read_ntag_data(ntag_type)
                             
                             if data_bytes:
-                                # Convert to text, filtering out non-printable characters
-                                text_data = ''.join(chr(b) for b in data_bytes if b >= 32 and b <= 126)
-                                print(f"Tag data: {text_data}")
+                                # Remove trailing zeros
+                                while data_bytes and data_bytes[-1] == 0:
+                                    data_bytes.pop()
                                 
-                                # Process the text data
-                                song_type, song_data = process_ntag_data(uid, text_data, ntag_type)
+                                if data_bytes:
+                                    # Convert to text, filtering out non-printable characters
+                                    text_data = ''.join(chr(b) for b in data_bytes if b >= 32 and b <= 126)
+                                    print(f"Raw tag data: {text_data}")
+                        
+                        if text_data:
+                            # Process the text data
+                            song_type, song_data = process_ntag_data(uid, text_data, ntag_type)
+                            
+                            if song_type == 'minecraft':
+                                song_name = song_data
+                                print(f"Playing Minecraft song: {song_name}")
+                                play_audio_url(f"audio/{song_name}.mp3")
                                 
-                                if song_type == 'minecraft':
-                                    song_name = song_data
-                                    print(f"Playing Minecraft song: {song_name}")
-                                    play_audio_url(f"audio/{song_name}.mp3")
-                                    
-                                elif song_type == 'ai':
-                                    mask = song_data
-                                    moods = extract_flags(mask)
-                                    print(f"Playing AI generated song with moods: {', '.join(moods)}")
-                                    data = generate_audio_by_prompt({
-                                        "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
-                                        "make_instrumental": True,
-                                        "wait_audio": False
-                                    })
+                            elif song_type == 'ai':
+                                mask = song_data
+                                moods = extract_flags(mask)
+                                print(f"Playing AI generated song with moods: {', '.join(moods)}")
+                                data = generate_audio_by_prompt({
+                                    "prompt": f"Generate a song with the following moods: {', '.join(moods)}",
+                                    "make_instrumental": True,
+                                    "wait_audio": False
+                                })
 
-                                    ids = f"{data[0]['id']},{data[1]['id']}"
-                                    print(f"ids: {ids}")
+                                ids = f"{data[0]['id']},{data[1]['id']}"
+                                print(f"ids: {ids}")
 
-                                    for _ in range(60):
-                                        data = get_audio_information(ids)
-                                        if data[0]["status"] == 'streaming':
-                                            url_1 = data[0]["audio_url"]
-                                            url_2 = data[1]["audio_url"]
-                                            print(f"{data[0]['id']} ==> {url_1}")
-                                            print(f"{data[1]['id']} ==> {url_2}")
-                                            
-                                            play_audio_url(url_1)
-                                            play_audio_url(url_2)
-                                            break
-                                        time.sleep(5)
-                                else:
-                                    print("Unknown song format or no valid song data found.")
+                                for _ in range(60):
+                                    data = get_audio_information(ids)
+                                    if data[0]["status"] == 'streaming':
+                                        url_1 = data[0]["audio_url"]
+                                        url_2 = data[1]["audio_url"]
+                                        print(f"{data[0]['id']} ==> {url_1}")
+                                        print(f"{data[1]['id']} ==> {url_2}")
+                                        
+                                        play_audio_url(url_1)
+                                        play_audio_url(url_2)
+                                        break
+                                    time.sleep(5)
                             else:
-                                print("No readable data found on tag")
+                                print("Unknown song format or no valid song data found.")
                         else:
-                            print("Failed to read tag data")
+                            print("No readable data found on tag")
                         
                         last_uid = uid_str
                     else:
