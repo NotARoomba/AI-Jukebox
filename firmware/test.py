@@ -74,12 +74,13 @@ def write_string_to_card(reader, uid, text):
         
         print(f"Block 4 data: {' '.join([f'{b:02X}' for b in block4])}")
         
-        # Use standard write method (like MicroPython implementation)
+        # Use NTAG-specific write method
         print("Writing block 4...")
-        if reader.write(4, block4) == reader.OK:
+        result = reader.writeNTAGBlock(4, block4)
+        if result == reader.OK:
             print("✓ Successfully wrote block 4")
         else:
-            print("✗ Failed to write block 4")
+            print(f"✗ Failed to write block 4: {result}")
             return False
         
         # If text is longer than 8 bytes, write to block 5
@@ -92,10 +93,11 @@ def write_string_to_card(reader, uid, text):
             print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
             
             print("Writing block 5...")
-            if reader.write(5, block5) == reader.OK:
+            result = reader.writeNTAGBlock(5, block5)
+            if result == reader.OK:
                 print("✓ Successfully wrote block 5")
             else:
-                print("✗ Failed to write block 5")
+                print(f"✗ Failed to write block 5: {result}")
                 return False
         
         # Write terminator TLV
@@ -105,10 +107,11 @@ def write_string_to_card(reader, uid, text):
         # Find the next available block
         next_block = 6 if text_length > 8 else 5
         print(f"Writing terminator to block {next_block}...")
-        if reader.write(next_block, block_terminator) == reader.OK:
+        result = reader.writeNTAGBlock(next_block, block_terminator)
+        if result == reader.OK:
             print("✓ Successfully wrote terminator")
         else:
-            print("✗ Failed to write terminator")
+            print(f"✗ Failed to write terminator: {result}")
             return False
         
         return True
@@ -136,8 +139,8 @@ def read_string_from_card(reader, uid):
         
         print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
         
-        # Read block 4 (NDEF data) using standard read method
-        stat, block4 = reader.read(4)
+        # Read block 4 (NDEF data) using NTAG-specific read method
+        stat, block4 = reader.readNTAGBlock(4)
         if stat != reader.OK or not block4 or len(block4) < 8:
             print("✗ Failed to read block 4 or insufficient data")
             return None
@@ -194,7 +197,7 @@ def read_string_from_card(reader, uid):
         current_block = 5
         
         while remaining_length > 0 and current_block <= reader.NTAG_MaxPage:
-            stat, block = reader.read(current_block)
+            stat, block = reader.readNTAGBlock(current_block)
             if stat == reader.OK and block and len(block) > 0:
                 print(f"Block {current_block}: {' '.join([f'{b:02X}' for b in block])}")
                 for i in range(len(block)):

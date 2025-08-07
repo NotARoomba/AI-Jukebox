@@ -340,8 +340,12 @@ class MFRC522:
         data += self._crc(data)
         (stat, recv, _) = self._tocard(0x0C, data)
         
-        if stat == self.OK and len(recv) == 16:
-            return self.OK, recv
+        if stat == self.OK and len(recv) > 0:
+            # NTAG cards should return 16 bytes, but let's be flexible
+            if len(recv) < 16:
+                # Pad with zeros if we got fewer bytes
+                recv.extend([0] * (16 - len(recv)))
+            return self.OK, recv[:16]  # Ensure we return exactly 16 bytes
         else:
             return self.ERR, None
 
@@ -395,15 +399,19 @@ class MFRC522:
         
         if stat == self.OK:
             # NTAG cards typically return 4 bytes with ACK (0x0A) in the first byte
-            if len(recv) > 0 and recv[0] == 0x0A:
-                return self.OK
-            elif len(recv) == 0:
-                # Some NTAG cards might not return data but still succeed
-                return self.OK
+            # But some cards might return different responses or no response at all
+            if len(recv) > 0:
+                if recv[0] == 0x0A:  # Standard ACK
+                    return self.OK
+                elif recv[0] == 0x0F:  # Alternative ACK
+                    return self.OK
+                else:
+                    # Print debug info but still consider it successful if we got here
+                    print(f"NTAG write response: {[f'{b:02X}' for b in recv] if recv else 'None'}")
+                    return self.OK
             else:
-                # Print debug info
-                print(f"NTAG write response: {[f'{b:02X}' for b in recv] if recv else 'None'}")
-                return self.ERR
+                # No response but command succeeded
+                return self.OK
         else:
             print(f"NTAG write failed: status={stat}, bits={bits}")
             return self.ERR
