@@ -117,23 +117,45 @@ def read_string_from_card(reader, uid):
         
         print(f"✓ Detected NTAG{reader.NTAG} card (max pages: {reader.NTAG_MaxPage})")
         
-        # Read all blocks to reconstruct the data
-        all_data = []
-        current_block = 4
+        # Read blocks (each read returns 16 bytes = 4 pages). Step by 4 pages to avoid overlap.
+        all_data = bytearray()
+        current_page = 4
+        expected_total = None  # ndef_start + 2 (+2 if long len) + tlv_len
         
-        while current_block <= reader.NTAG_MaxPage:
-            stat, block = reader.readNTAGBlock(current_block)
-            if stat == reader.OK and block and len(block) > 0:
-                print(f"Block {current_block}: {' '.join([f'{b:02X}' for b in block])}")
-                all_data.extend(block)
-                
-                # Check if we hit a terminator or all zeros
-                if block[0] == 0xFE or all(b == 0 for b in block):
-                    print(f"Found terminator or end of data at block {current_block}")
-                    break
-            else:
+        while current_page <= reader.NTAG_MaxPage:
+            stat, block = reader.readNTAGBlock(current_page)
+            if stat != reader.OK or not block:
                 break
-            current_block += 1
+            print(f"Block {current_page}: {' '.join([f'{b:02X}' for b in block])}")
+            all_data.extend(block)
+
+            # Once we have at least TLV header, compute total expected length
+            if expected_total is None and len(all_data) >= 2:
+                # Find TLV 0x03
+                tlv_idx = -1
+                for i in range(len(all_data) - 1):
+                    if all_data[i] == 0x03:
+                        tlv_idx = i
+                        break
+                if tlv_idx != -1:
+                    # If short length available
+                    if len(all_data) >= tlv_idx + 2:
+                        tlv_len = all_data[tlv_idx + 1]
+                        header_extra = 0
+                        if tlv_len == 0xFF:
+                            # Need two-byte length
+                            if len(all_data) >= tlv_idx + 4:
+                                tlv_len = (all_data[tlv_idx + 2] << 8) | all_data[tlv_idx + 3]
+                                header_extra = 2
+                            else:
+                                tlv_len = None
+                        if tlv_len is not None:
+                            expected_total = tlv_idx + 2 + header_extra + tlv_len
+
+            if expected_total is not None and len(all_data) >= expected_total:
+                break
+
+            current_page += 4
         
         if not all_data:
             print("✗ No data found")
