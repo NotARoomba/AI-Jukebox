@@ -321,7 +321,7 @@ class MFRC522:
         buf.append(pOut[1])
         (status, backData, backLen) = self.MFRC522_ToCard(self.PCD_TRANSCEIVE, buf)
 
-        if (status == self.MI_OK) and (backLen == 0x18):
+        if (status == self.MI_OK) and (backLen == 0x18) and len(backData) > 0:
             self.logger.debug("Size: " + str(backData[0]))
             return backData[0]
         else:
@@ -384,10 +384,14 @@ class MFRC522:
         buff.append(crc[0])
         buff.append(crc[1])
         (status, backData, backLen) = self.MFRC522_ToCard(self.PCD_TRANSCEIVE, buff)
-        if not (status == self.MI_OK) or not (backLen == 4) or not ((backData[0] & 0x0F) == 0x0A):
+        if not (status == self.MI_OK) or not (backLen == 4) or not (len(backData) > 0 and (backData[0] & 0x0F) == 0x0A):
             status = self.MI_ERR
 
-        self.logger.debug("%s backdata &0x0F == 0x0A %s" % (backLen, backData[0] & 0x0F))
+        if len(backData) > 0:
+            self.logger.debug("%s backdata &0x0F == 0x0A %s" % (backLen, backData[0] & 0x0F))
+        else:
+            self.logger.debug("No backdata received")
+            
         if status == self.MI_OK:
             buf = []
             for i in range(16):
@@ -397,10 +401,12 @@ class MFRC522:
             buf.append(crc[0])
             buf.append(crc[1])
             (status, backData, backLen) = self.MFRC522_ToCard(self.PCD_TRANSCEIVE, buf)
-            if not (status == self.MI_OK) or not (backLen == 4) or not ((backData[0] & 0x0F) == 0x0A):
+            if not (status == self.MI_OK) or not (backLen == 4) or not (len(backData) > 0 and (backData[0] & 0x0F) == 0x0A):
                 self.logger.error("Error while writing")
             if status == self.MI_OK:
                 self.logger.debug("Data written")
+        
+        return status
 
 
     def MFRC522_DumpClassic1K(self, key, uid):
