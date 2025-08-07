@@ -77,7 +77,36 @@ def create_player(audio_url):
     set_volume(VOLUME)
     player = vlc.MediaPlayer(audio_url)
     player.play()
+    try:
+        # Give VLC a moment to initialize, then set player volume to full (relative to system)
+        time.sleep(0.05)
+        player.audio_set_volume(100)
+    except Exception:
+        pass
     return player
+
+def fade_out_and_stop(player, fade_ms=800, steps=16):
+    if player is None:
+        return
+    try:
+        current = player.audio_get_volume()
+        if current is None or current < 0:
+            current = 100
+        step = max(1, current // steps)
+        delay = max(0.0, (fade_ms / 1000.0) / max(1, (current // step)))
+        vol = current
+        while vol > 0:
+            player.audio_set_volume(vol)
+            time.sleep(delay)
+            vol -= step
+        player.audio_set_volume(0)
+    except Exception:
+        pass
+    try:
+        player.stop()
+        player.release()
+    except Exception:
+        pass
 
 def read_text_from_tag(reader):
     # Read NDEF Text record payload using same logic verified in test.py
@@ -194,13 +223,9 @@ def main():
                 presence_miss_count += 1
                 if current_uid is not None and presence_miss_count >= 5:
                     # Consider tag removed after consecutive misses
-                    print("Tag removed. Stopping playback.")
+                    print("Tag removed. Fading out...")
                     if player is not None:
-                        try:
-                            player.stop()
-                            player.release()
-                        except Exception:
-                            pass
+                        fade_out_and_stop(player)
                         player = None
                     playlist = []
                     current_track_url = None
@@ -242,13 +267,9 @@ def main():
                         last_tag_text = text
                     else:
                         # Stop existing playback only if changing track
-                        if player is not None:
-                            try:
-                                player.stop()
-                                player.release()
-                            except Exception:
-                                pass
-                            player = None
+                if player is not None:
+                    fade_out_and_stop(player)
+                    player = None
                         playlist = []
                         current_track_url = None
 
@@ -265,11 +286,7 @@ def main():
                     else:
                         # Stop existing playback only if changing selection
                         if player is not None:
-                            try:
-                                player.stop()
-                                player.release()
-                            except Exception:
-                                pass
+                            fade_out_and_stop(player)
                             player = None
                         playlist = []
                         current_track_url = None
