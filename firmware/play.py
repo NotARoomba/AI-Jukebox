@@ -7,6 +7,8 @@ PIN_PLAY_PAUSE = 17
 PIN_REWIND     = 27
 PIN_FORWARD    = 22
 
+VOLUME = 100
+
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(PIN_PLAY_PAUSE, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
@@ -28,6 +30,7 @@ def play_audio_url(audio_url):
             return
     
     player = vlc.MediaPlayer(audio_url)
+    player.audio_set_volume(VOLUME)
     player.play()
     is_playing = True
 
