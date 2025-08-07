@@ -1,19 +1,31 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
 #
-# MFRC522 Library for NTAG215 and ISO 14443-3A support
-# Rewritten from scratch for better compatibility and reliability
+# MFRC522 Library for All NTAG Types (NTAG213, NTAG215, NTAG216, etc.)
+# Rewritten from scratch for comprehensive NTAG support
 #
 
 import RPi.GPIO as GPIO
 import spidev
 import time
 import logging
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
+from enum import Enum
+
+class NTAGType(Enum):
+    """NTAG type enumeration"""
+    UNKNOWN = 0
+    NTAG213 = 1
+    NTAG215 = 2
+    NTAG216 = 3
+    NTAG213F = 4
+    NTAG215F = 5
+    NTAG216F = 6
 
 class MFRC522:
     """
-    MFRC522 RFID Reader/Writer for NTAG215 and ISO 14443-3A tags
+    MFRC522 RFID Reader/Writer for All NTAG Types
+    Supports NTAG213, NTAG215, NTAG216, NTAG213F, NTAG215F, NTAG216F
     """
     
     # MFRC522 Register definitions
@@ -94,7 +106,7 @@ class MFRC522:
     PICC_TRANSFER = 0xB0  # Transfer
     PICC_HALT = 0x50  # Halt
     
-    # NTAG215 specific commands
+    # NTAG specific commands
     PICC_UL_WRITE = 0xA2  # Ultralight write
     PICC_UL_READ = 0x30   # Ultralight read (same as PICC_READ)
     
@@ -102,6 +114,52 @@ class MFRC522:
     MI_OK = 0
     MI_NOTAGERR = 1
     MI_ERR = 2
+    
+    # NTAG specifications
+    NTAG_SPECS = {
+        NTAGType.NTAG213: {
+            'name': 'NTAG213',
+            'pages': 36,
+            'user_pages': (4, 35),
+            'user_bytes': 128,
+            'uid_length': 7
+        },
+        NTAGType.NTAG215: {
+            'name': 'NTAG215', 
+            'pages': 135,
+            'user_pages': (4, 134),
+            'user_bytes': 504,
+            'uid_length': 7
+        },
+        NTAGType.NTAG216: {
+            'name': 'NTAG216',
+            'pages': 231,
+            'user_pages': (4, 230),
+            'user_bytes': 888,
+            'uid_length': 7
+        },
+        NTAGType.NTAG213F: {
+            'name': 'NTAG213F',
+            'pages': 36,
+            'user_pages': (4, 35),
+            'user_bytes': 128,
+            'uid_length': 7
+        },
+        NTAGType.NTAG215F: {
+            'name': 'NTAG215F',
+            'pages': 135,
+            'user_pages': (4, 134),
+            'user_bytes': 504,
+            'uid_length': 7
+        },
+        NTAGType.NTAG216F: {
+            'name': 'NTAG216F',
+            'pages': 231,
+            'user_pages': (4, 230),
+            'user_bytes': 888,
+            'uid_length': 7
+        }
+    }
     
     def __init__(self, bus=0, device=0, spd=1000000, pin_mode=10, pin_rst=-1, debug_level='WARNING'):
         """
@@ -291,7 +349,7 @@ class MFRC522:
         tag_type = [req_mode]
         (status, back_data, back_bits) = self.to_card(self.PCD_TRANSCEIVE, tag_type)
         
-        # For NTAG215 tags, we need to be more flexible with the response
+        # For NTAG tags, we need to be more flexible with the response
         if status != self.MI_OK:
             return (self.MI_ERR, 0)
         
@@ -413,45 +471,113 @@ class MFRC522:
         p_out_data.append(self.read_register(self.CRCResultRegM))
         return p_out_data
         
-    def detect_ntag215(self) -> Tuple[bool, List[int]]:
+    def detect_ntag(self) -> Tuple[bool, List[int], NTAGType]:
         """
-        Detect and get UID of NTAG215 tag with robust error handling
+        Detect and get UID of NTAG tag with type detection
         
         Returns:
-            Tuple of (success, uid)
+            Tuple of (success, uid, ntag_type)
         """
         try:
             # Step 1: Request card detection
             (status, back_bits) = self.request(self.PICC_REQIDL)
             if status != self.MI_OK:
                 self.logger.debug("No card detected")
-                return (False, [])
+                return (False, [], NTAGType.UNKNOWN)
             
             # Step 2: Anticollision
             (status, uid) = self.anticoll()
             if status != self.MI_OK or not uid:
                 self.logger.debug("Anticollision failed")
-                return (False, [])
+                return (False, [], NTAGType.UNKNOWN)
             
             # Step 3: Select tag
             sak = self.select_tag(uid)
             if sak == 0:
                 self.logger.debug("Tag selection failed")
-                return (False, [])
+                return (False, [], NTAGType.UNKNOWN)
             
-            self.logger.info(f"NTAG215 detected with UID: {uid}")
-            return (True, uid)
+            # Step 4: Detect NTAG type
+            ntag_type = self.detect_ntag_type(uid, sak)
+            
+            self.logger.info(f"{ntag_type.name} detected with UID: {uid}")
+            return (True, uid, ntag_type)
             
         except Exception as e:
-            self.logger.error(f"Error in detect_ntag215: {e}")
-            return (False, [])
+            self.logger.error(f"Error in detect_ntag: {e}")
+            return (False, [], NTAGType.UNKNOWN)
     
-    def read_ntag215_page(self, page_addr: int) -> Optional[List[int]]:
+    def detect_ntag_type(self, uid: List[int], sak: int) -> NTAGType:
         """
-        Read a page from NTAG215
+        Detect NTAG type based on UID and SAK
         
         Args:
-            page_addr: Page address (0-35)
+            uid: UID of the tag
+            sak: Select Acknowledge
+            
+        Returns:
+            NTAGType enumeration
+        """
+        try:
+            # Read page 3 to get capability container
+            page3_data = self.read_ntag_page(3)
+            if not page3_data:
+                self.logger.debug("Failed to read page 3 for capability container")
+                return NTAGType.UNKNOWN
+            
+            # Check capability container (bytes 0-2)
+            cc = page3_data[0:3]
+            
+            # NTAG213/215/216 have CC = [0xE1, 0x10, 0x06]
+            if cc == [0xE1, 0x10, 0x06]:
+                # Check UID length and structure
+                uid_length = len(uid)
+                if uid_length >= 4:
+                    # Check for NTAG213/215/216 based on UID structure
+                    if uid[0] == 0x04:  # NTAG213/215/216 start with 0x04
+                        # Try to read more pages to determine exact type
+                        # Start with NTAG213 (36 pages)
+                        try:
+                            # Try to read a page beyond NTAG213 limit
+                            test_page = self.read_ntag_page(36)
+                            if test_page:
+                                # Try to read beyond NTAG215 limit
+                                test_page2 = self.read_ntag_page(135)
+                                if test_page2:
+                                    # Try to read beyond NTAG216 limit
+                                    test_page3 = self.read_ntag_page(231)
+                                    if test_page3:
+                                        return NTAGType.NTAG216
+                                    else:
+                                        return NTAGType.NTAG215
+                                else:
+                                    return NTAGType.NTAG215
+                            else:
+                                return NTAGType.NTAG213
+                        except Exception as e:
+                            self.logger.debug(f"Error during page testing: {e}")
+                            # Default to NTAG215 if detection fails
+                            return NTAGType.NTAG215
+                    else:
+                        self.logger.debug(f"UID doesn't start with 0x04: {uid[0]:02X}")
+                        return NTAGType.UNKNOWN
+                else:
+                    self.logger.debug(f"UID too short: {uid_length}")
+                    return NTAGType.UNKNOWN
+            else:
+                self.logger.debug(f"Invalid capability container: {cc}")
+                return NTAGType.UNKNOWN
+                
+        except Exception as e:
+            self.logger.error(f"Error in detect_ntag_type: {e}")
+            return NTAGType.UNKNOWN
+    
+    def read_ntag_page(self, page_addr: int) -> Optional[List[int]]:
+        """
+        Read a page from NTAG
+        
+        Args:
+            page_addr: Page address
             
         Returns:
             Page data (4 bytes) or None if failed
@@ -468,12 +594,12 @@ class MFRC522:
         else:
             return None
             
-    def write_ntag215_page(self, page_addr: int, write_data: List[int]) -> bool:
+    def write_ntag_page(self, page_addr: int, write_data: List[int]) -> bool:
         """
-        Write a page to NTAG215
+        Write a page to NTAG
         
         Args:
-            page_addr: Page address (4-35 for user data)
+            page_addr: Page address
             write_data: Data to write (4 bytes)
             
         Returns:
@@ -492,34 +618,45 @@ class MFRC522:
         
         if status == self.MI_OK:
             if len(back_data) >= 1 and back_data[0] == 0x0A:
-                self.logger.debug(f"NTAG215 write successful for page {page_addr}")
+                self.logger.debug(f"NTAG write successful for page {page_addr}")
                 return True
             elif len(back_data) == 0:
                 # Some tags don't return ACK but still succeed
-                self.logger.debug(f"NTAG215 write completed for page {page_addr} (no ACK)")
+                self.logger.debug(f"NTAG write completed for page {page_addr} (no ACK)")
                 return True
             else:
-                self.logger.error(f"NTAG215 write failed for page {page_addr}: unexpected response {back_data}")
+                self.logger.error(f"NTAG write failed for page {page_addr}: unexpected response {back_data}")
                 return False
         else:
-            self.logger.error(f"NTAG215 write failed for page {page_addr}: status {status}")
+            self.logger.error(f"NTAG write failed for page {page_addr}: status {status}")
             return False
             
-    def read_ntag215_data(self, start_page: int = 4, end_page: int = 35) -> Optional[List[int]]:
+    def read_ntag_data(self, ntag_type: NTAGType, start_page: int = None, end_page: int = None) -> Optional[List[int]]:
         """
-        Read data from NTAG215 pages
+        Read data from NTAG pages
         
         Args:
-            start_page: Starting page (default 4 for user data)
-            end_page: Ending page (default 35)
+            ntag_type: NTAG type
+            start_page: Starting page (default: user data start)
+            end_page: Ending page (default: user data end)
             
         Returns:
             Data bytes or None if failed
         """
+        if ntag_type == NTAGType.UNKNOWN:
+            self.logger.error("Unknown NTAG type")
+            return None
+        
+        spec = self.NTAG_SPECS[ntag_type]
+        if start_page is None:
+            start_page = spec['user_pages'][0]
+        if end_page is None:
+            end_page = spec['user_pages'][1]
+        
         data_bytes = []
         
         for page_addr in range(start_page, end_page + 1):
-            page_data = self.read_ntag215_page(page_addr)
+            page_data = self.read_ntag_page(page_addr)
             if page_data:
                 data_bytes.extend(page_data)
             else:
@@ -528,20 +665,35 @@ class MFRC522:
                 
         return data_bytes if data_bytes else None
         
-    def write_ntag215_data(self, data: List[int], start_page: int = 4) -> bool:
+    def write_ntag_data(self, data: List[int], ntag_type: NTAGType, start_page: int = None) -> bool:
         """
-        Write data to NTAG215 pages
+        Write data to NTAG pages
         
         Args:
             data: Data to write
-            start_page: Starting page (default 4 for user data)
+            ntag_type: NTAG type
+            start_page: Starting page (default: user data start)
             
         Returns:
             True if successful, False otherwise
         """
+        if ntag_type == NTAGType.UNKNOWN:
+            self.logger.error("Unknown NTAG type")
+            return False
+        
         if not data:
             return True
-            
+        
+        spec = self.NTAG_SPECS[ntag_type]
+        if start_page is None:
+            start_page = spec['user_pages'][0]
+        
+        # Check if data is too large
+        max_bytes = spec['user_bytes']
+        if len(data) > max_bytes:
+            self.logger.error(f"Data too large for {ntag_type.name}: {len(data)} bytes > {max_bytes} bytes")
+            return False
+        
         # Pad data to 4-byte boundaries
         while len(data) % 4 != 0:
             data.append(0x00)
@@ -552,7 +704,7 @@ class MFRC522:
             if len(page_data) < 4:
                 page_data.extend([0x00] * (4 - len(page_data)))
                 
-            if not self.write_ntag215_page(page_addr, page_data):
+            if not self.write_ntag_page(page_addr, page_data):
                 self.logger.error(f"Failed to write page {page_addr}")
                 return False
                 
@@ -561,25 +713,51 @@ class MFRC522:
             
         return True
         
-    def clear_ntag215_data(self, start_page: int = 4, end_page: int = 35) -> bool:
+    def clear_ntag_data(self, ntag_type: NTAGType, start_page: int = None, end_page: int = None) -> bool:
         """
-        Clear NTAG215 data by writing zeros
+        Clear NTAG data by writing zeros
         
         Args:
-            start_page: Starting page (default 4 for user data)
-            end_page: Ending page (default 35)
+            ntag_type: NTAG type
+            start_page: Starting page (default: user data start)
+            end_page: Ending page (default: user data end)
             
         Returns:
             True if successful, False otherwise
         """
+        if ntag_type == NTAGType.UNKNOWN:
+            self.logger.error("Unknown NTAG type")
+            return False
+        
+        spec = self.NTAG_SPECS[ntag_type]
+        if start_page is None:
+            start_page = spec['user_pages'][0]
+        if end_page is None:
+            end_page = spec['user_pages'][1]
+        
         zero_data = [0x00, 0x00, 0x00, 0x00]
         
         for page_addr in range(start_page, end_page + 1):
-            if not self.write_ntag215_page(page_addr, zero_data):
+            if not self.write_ntag_page(page_addr, zero_data):
                 self.logger.warning(f"Failed to clear page {page_addr}")
                 # Continue with other pages
                 
         return True
+    
+    def get_ntag_info(self, ntag_type: NTAGType) -> Dict[str, Any]:
+        """
+        Get information about NTAG type
+        
+        Args:
+            ntag_type: NTAG type
+            
+        Returns:
+            Dictionary with NTAG information
+        """
+        if ntag_type == NTAGType.UNKNOWN:
+            return {'name': 'Unknown', 'pages': 0, 'user_bytes': 0}
+        
+        return self.NTAG_SPECS[ntag_type].copy()
         
     def close(self):
         """Close the MFRC522 and cleanup"""
