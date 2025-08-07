@@ -184,15 +184,16 @@ def main():
     playlist = []  # pending urls for AI two-part playback
     current_track_url = None
     last_tag_text = None
+    presence_miss_count = 0
     try:
         print("Place an NFC card on the reader... Press Ctrl+C to exit")
         while True:
-            # Poll for tag presence
+            # Poll for tag presence with debounce
             present_status, _ = reader.request(reader.REQIDL)
             if present_status != reader.OK:
-                # No tag present
-                if current_uid is not None:
-                    # Tag removed: stop playback
+                presence_miss_count += 1
+                if current_uid is not None and presence_miss_count >= 5:
+                    # Consider tag removed after consecutive misses
                     print("Tag removed. Stopping playback.")
                     if player is not None:
                         try:
@@ -204,12 +205,16 @@ def main():
                     playlist = []
                     current_track_url = None
                     current_uid = None
+                    last_tag_text = None
                 time.sleep(0.1)
                 continue
+            else:
+                presence_miss_count = 0
 
             # Tag present, get UID
             status, uid = reader.SelectTagSN()
             if status != reader.OK:
+                # Could be transient; do not treat as removal yet
                 time.sleep(0.05)
                 continue
 
