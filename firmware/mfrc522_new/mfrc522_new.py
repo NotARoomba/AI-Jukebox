@@ -129,17 +129,17 @@ class StatusCode(IntEnum):
 
 
 class Uid:
-    """A struct used for passing the UID of a PICC"""
+    """UID structure"""
     def __init__(self):
-        self.size = 0  # Number of bytes in the UID. 4, 7 or 10.
-        self.uid_byte = [0] * 10  # UID bytes
-        self.sak = 0  # The SAK (Select acknowledge) byte returned from the PICC after successful selection.
+        self.size = 0
+        self.uid_byte = [0] * 10
+        self.sak = 0
 
 
 class MIFARE_Key:
-    """A struct used for passing a MIFARE Crypto1 key"""
+    """MIFARE key structure"""
     def __init__(self):
-        self.key_byte = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]  # Default key
+        self.key_byte = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
 
 
 class MFRC522:
@@ -184,6 +184,10 @@ class MFRC522:
     
     def __del__(self):
         """Destructor"""
+        self.close()
+    
+    def close(self):
+        """Closes the MFRC522 and cleans up GPIO"""
         if hasattr(self, '_spi') and self._spi:
             self._spi.close()
         GPIO.cleanup()
@@ -197,7 +201,7 @@ class MFRC522:
             value: The value to write
         """
         GPIO.output(self._chip_select_pin, GPIO.LOW)
-        self._spi.xfer([reg, value])
+        self._spi.xfer2([reg, value])
         GPIO.output(self._chip_select_pin, GPIO.HIGH)
     
     def PCD_ReadRegister(self, reg: PCD_Register) -> int:
@@ -211,7 +215,7 @@ class MFRC522:
             The value read from the register
         """
         GPIO.output(self._chip_select_pin, GPIO.LOW)
-        result = self._spi.xfer([0x80 | reg, 0])
+        result = self._spi.xfer2([0x80 | reg, 0])
         GPIO.output(self._chip_select_pin, GPIO.HIGH)
         return result[1]
     
@@ -257,10 +261,11 @@ class MFRC522:
         
         self.PCD_WriteRegister(PCD_Register.CommandReg, PCD_Command.PCD_CALCCRC)
         
-        # Wait for the CRC calculation to complete
-        for i in range(0xFF):
+        i = 0xFF
+        while True:
             n = self.PCD_ReadRegister(PCD_Register.DivIrqReg)
-            if n & 0x04:
+            i -= 1
+            if not ((i != 0) and not (n & 0x04)):
                 break
         
         crc_low = self.PCD_ReadRegister(PCD_Register.CRCResultRegL)
@@ -277,13 +282,10 @@ class MFRC522:
             GPIO.output(self._reset_power_down_pin, GPIO.HIGH)
             time.sleep(0.1)
         
-        # Reset baud rates
-        self.PCD_WriteRegister(PCD_Register.TxModeReg, 0x00)
-        self.PCD_WriteRegister(PCD_Register.RxModeReg, 0x00)
-        # Reset ModWidthReg
-        self.PCD_WriteRegister(PCD_Register.ModWidthReg, 0x26)
+        # Reset the MFRC522
+        self.PCD_Reset()
         
-        # When communicating with a PICC we need a timeout if something goes wrong.
+        # Timer settings - see 8.1.2.3 810 / E02, page 22; 9.3.1.79 / E01, page 184.
         # f_timer = 13.56 MHz / (2*TPreScaler+1) where TPreScaler = [TPrescaler_Hi:TPrescaler_Lo].
         # TPreScaler of 0xA gives 13.56 MHz / (2*10+1) = 646.36 kHz.
         # TAutomatic of 0x86 gives TAuto=1000 * f_timer / 13.56 MHz = 1000 * 646.36 kHz / 13.56 MHz = 47.66 ms.
@@ -375,9 +377,27 @@ class MFRC522:
                     if n > self.FIFO_SIZE:
                         n = self.FIFO_SIZE
                     
-                    # Reading the received data from FIFO
+                    # Read the data from the FIFO
                     for i in range(n):
                         back_data[i] = self.PCD_ReadRegister(PCD_Register.FIFODataReg)
+                    
+                    if check_crc:
+                        # In this case a MIFARE Classic NAK is not OK.
+                        if back_len[0] == 1 and last_bits == 4:
+                            status = StatusCode.STATUS_MIFARE_NACK
+                        
+                        # We need at least the CRC_A.
+                        if status == StatusCode.STATUS_OK and back_len[0] < 2:
+                            status = StatusCode.STATUS_CRC_WRONG
+                        
+                        if status == StatusCode.STATUS_OK:
+                            # Calculate CRC_A of the received data.
+                            control = back_data[back_len[0] - 2] << 8
+                            control = control + back_data[back_len[0] - 1]
+                            calc_control = self.PCD_CalculateCRC(back_data, back_len[0] - 2)
+                            
+                            if control != calc_control:
+                                status = StatusCode.STATUS_CRC_WRONG
             else:
                 status = StatusCode.STATUS_ERROR
         else:
@@ -387,37 +407,50 @@ class MFRC522:
     
     def PICC_RequestA(self, buffer_atqa: List[int], buffer_size: List[int]) -> StatusCode:
         """
-        Transmits REQA command.
+        Transmits a REQuest command, Type A. Invites PICCs in state IDLE to go to READY and prepare for anticollision or selection. 7 bit frame.
         
         Args:
-            buffer_atqa: The answer to the request, 2 bytes
-            buffer_size: Buffer size, at least 2 bytes (list with one element)
+            buffer_atqa: Buffer to store the ATQA (Answer to request) from the PICC
+            buffer_size: Buffer size, at least 2 bytes. Also number of bytes returned if STATUS_OK.
             
         Returns:
-            StatusCode indicating success or failure
+            STATUS_OK on success, STATUS_??? otherwise.
         """
         buffer_size[0] = 2
-        status = self.PICC_REQA_or_WUPA(PICC_Command.PICC_CMD_REQA, buffer_atqa, buffer_size)
-        return status
+        buffer_atqa[0] = PICC_Command.PICC_CMD_REQA
+        return self.PICC_REQA_or_WUPA(buffer_atqa, buffer_size)
     
     def PICC_REQA_or_WUPA(self, command: PICC_Command, buffer_atqa: List[int], 
                          buffer_size: List[int]) -> StatusCode:
         """
-        Transmits REQA or WUPA command.
+        Transmits REQA or WUPA commands.
         
         Args:
             command: The command to send - PICC_CMD_REQA or PICC_CMD_WUPA
-            buffer_atqa: The answer to the request, 2 bytes
-            buffer_size: Buffer size, at least 2 bytes (list with one element)
+            buffer_atqa: The answer from the PICC is returned here
+            buffer_size: Buffer size, at least 2 bytes. Also number of bytes returned.
             
         Returns:
-            StatusCode indicating success or failure
+            STATUS_OK on success, STATUS_??? otherwise.
         """
-        buffer_size[0] = 2
-        buffer_atqa[0] = command
-        buffer_atqa[1] = 0x00
+        if buffer_size[0] < 2:
+            return StatusCode.STATUS_NO_ROOM
         
-        status = self.PCD_TransceiveData(buffer_atqa, 1, buffer_atqa, buffer_size)
+        self.PCD_WriteRegister(PCD_Register.BitFramingReg, 0x07)
+        buffer_atqa[0] = command
+        back_data = [0] * 2
+        back_len = [0]
+        
+        status = self.PCD_TransceiveData(buffer_atqa, 1, back_data, back_len)
+        
+        if status == StatusCode.STATUS_OK:
+            if back_len[0] != 2:
+                status = StatusCode.STATUS_ERROR
+            else:
+                buffer_atqa[0] = back_data[0]
+                buffer_atqa[1] = back_data[1]
+                buffer_size[0] = 2
+        
         return status
     
     def PICC_Select(self, uid: Uid, valid_bits: int = 0) -> StatusCode:
@@ -426,53 +459,50 @@ class MFRC522:
         
         Args:
             uid: UID to select
-            valid_bits: The number of known UID bits supplied in *uid
+            valid_bits: Number of valid bits in the UID
             
         Returns:
-            StatusCode indicating success or failure
+            STATUS_OK on success, STATUS_??? otherwise.
         """
-        # Anti-collision
         select_data = [0x93, 0x70]
-        select_data.extend(uid.uid_byte[:5])
+        select_data.extend(uid.uid_byte[:uid.size])
         
         # Calculate CRC_A
-        crc_high, crc_low = self.PCD_CalculateCRC(select_data, 7)
+        crc_high, crc_low = self.PCD_CalculateCRC(select_data, len(select_data))
         select_data.append(crc_low)
         select_data.append(crc_high)
         
-        back_data = [0] * 3
+        back_data = [0] * 1
         back_len = [0]
         
-        status = self.PCD_TransceiveData(select_data, 9, back_data, back_len)
+        status = self.PCD_TransceiveData(select_data, len(select_data), back_data, back_len)
         
-        if status == StatusCode.STATUS_OK and back_len[0] == 0x18:
+        if status == StatusCode.STATUS_OK and back_len[0] == 1:
             uid.sak = back_data[0]
-            # Copy the UID
-            for i in range(4):
-                uid.uid_byte[i] = back_data[i + 1]
-            uid.size = 4
+            return StatusCode.STATUS_OK
         else:
-            status = StatusCode.STATUS_ERROR
-        
-        return status
+            return StatusCode.STATUS_ERROR
     
     def PICC_HaltA(self) -> StatusCode:
         """
         Instructs a PICC in state ACTIVE(*) to go to state HALT.
         
         Returns:
-            StatusCode indicating success or failure
+            STATUS_OK on success, STATUS_??? otherwise.
         """
-        halt_data = [PICC_Command.PICC_CMD_HLTA, 0]
-        crc_high, crc_low = self.PCD_CalculateCRC(halt_data, 2)
-        halt_data.append(crc_low)
-        halt_data.append(crc_high)
-        
+        buffer = [PICC_Command.PICC_CMD_HLTA, 0]
         back_data = [0] * 1
         back_len = [0]
         
-        status = self.PCD_TransceiveData(halt_data, 4, back_data, back_len)
-        return status
+        status = self.PCD_TransceiveData(buffer, 2, back_data, back_len)
+        
+        if status != StatusCode.STATUS_OK:
+            return status
+        
+        if back_len[0] != 1:
+            return StatusCode.STATUS_ERROR
+        
+        return StatusCode.STATUS_OK
     
     def PICC_IsNewCardPresent(self) -> bool:
         """
@@ -483,8 +513,9 @@ class MFRC522:
         """
         buffer_atqa = [0, 0]
         buffer_size = [2]
+        
         status = self.PICC_RequestA(buffer_atqa, buffer_size)
-        return status == StatusCode.STATUS_OK and buffer_size[0] == 2 and buffer_atqa[0] == 0x04
+        return status == StatusCode.STATUS_OK
     
     def PICC_ReadCardSerial(self) -> bool:
         """
@@ -593,47 +624,45 @@ class MFRC522:
         
         Args:
             block_addr: The block (0-0xff) number
-            buffer: Buffer containing the data to write
+            buffer: The 16 bytes of data to write to the PICC
             buffer_size: Buffer size, must be at least 16 bytes
             
         Returns:
             StatusCode indicating success or failure
         """
-        buffer[0] = PICC_Command.PICC_CMD_MF_WRITE
-        buffer[1] = block_addr
+        if buffer_size < 16:
+            return StatusCode.STATUS_INVALID
+        
+        # Prepare the command
+        send_data = [PICC_Command.PICC_CMD_MF_WRITE, block_addr]
         
         # Calculate CRC_A
-        crc_high, crc_low = self.PCD_CalculateCRC(buffer, 2)
-        buffer[2] = crc_low
-        buffer[3] = crc_high
+        crc_high, crc_low = self.PCD_CalculateCRC(send_data, 2)
+        send_data.append(crc_low)
+        send_data.append(crc_high)
         
-        back_data = [0] * 1
+        back_data = [0] * 4
         back_len = [0]
         
-        status = self.PCD_TransceiveData(buffer, 4, back_data, back_len)
+        status = self.PCD_TransceiveData(send_data, 4, back_data, back_len)
         
-        if status != StatusCode.STATUS_OK:
-            return status
+        if status != StatusCode.STATUS_OK or back_len[0] != 4 or (back_data[0] & 0x0F) != 0x0A:
+            return StatusCode.STATUS_ERROR
         
-        if back_len[0] != 1 or back_data[0] != 0x0A:
-            status = StatusCode.STATUS_ERROR
+        # Prepare the data
+        send_data = buffer[:16]
         
-        if status == StatusCode.STATUS_OK:
-            # Data to write
-            data_buffer = buffer[:16]
-            crc_high, crc_low = self.PCD_CalculateCRC(data_buffer, 16)
-            data_buffer.append(crc_low)
-            data_buffer.append(crc_high)
-            
-            status = self.PCD_TransceiveData(data_buffer, 18, back_data, back_len)
-            
-            if status != StatusCode.STATUS_OK:
-                return status
-            
-            if back_len[0] != 1 or back_data[0] != 0x0A:
-                status = StatusCode.STATUS_ERROR
+        # Calculate CRC_A
+        crc_high, crc_low = self.PCD_CalculateCRC(send_data, 16)
+        send_data.append(crc_low)
+        send_data.append(crc_high)
         
-        return status
+        status = self.PCD_TransceiveData(send_data, 18, back_data, back_len)
+        
+        if status != StatusCode.STATUS_OK or back_len[0] != 4 or (back_data[0] & 0x0F) != 0x0A:
+            return StatusCode.STATUS_ERROR
+        
+        return StatusCode.STATUS_OK
     
     @staticmethod
     def PICC_GetType(sak: int) -> PICC_Type:
