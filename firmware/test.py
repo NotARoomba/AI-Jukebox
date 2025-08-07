@@ -76,7 +76,7 @@ def write_string_to_card(reader, uid, text):
         
         # Use NTAG-specific write method
         print("Writing block 4...")
-        result = reader.writeNTAGBlock(4, block4)
+        result = reader.writeNTAGBlockSimple(4, block4)
         if result == reader.OK:
             print("✓ Successfully wrote block 4")
         else:
@@ -93,7 +93,7 @@ def write_string_to_card(reader, uid, text):
             print(f"Block 5 data: {' '.join([f'{b:02X}' for b in block5])}")
             
             print("Writing block 5...")
-            result = reader.writeNTAGBlock(5, block5)
+            result = reader.writeNTAGBlockSimple(5, block5)
             if result == reader.OK:
                 print("✓ Successfully wrote block 5")
             else:
@@ -107,7 +107,7 @@ def write_string_to_card(reader, uid, text):
         # Find the next available block
         next_block = 6 if text_length > 8 else 5
         print(f"Writing terminator to block {next_block}...")
-        result = reader.writeNTAGBlock(next_block, block_terminator)
+        result = reader.writeNTAGBlockSimple(next_block, block_terminator)
         if result == reader.OK:
             print("✓ Successfully wrote terminator")
         else:

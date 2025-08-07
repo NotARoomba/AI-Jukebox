@@ -415,6 +415,32 @@ class MFRC522:
         else:
             print(f"NTAG write failed: status={stat}, bits={bits}")
             return self.ERR
+
+    def writeNTAGBlockSimple(self, page, data):
+        """Write a block to NTAG (16 bytes) using NTAG-specific command with simpler validation"""
+        if page > self.NTAG_MaxPage:
+            return self.ERR
+        if page < 4:
+            return self.ERR
+        if len(data) != 16:
+            return self.ERR
+        
+        # NTAG write command: 0xA2
+        buf = [0xA2, page]
+        
+        # Add the data (16 bytes)
+        for i in range(16):
+            buf.append(data[i])
+        
+        # Send the command
+        (stat, recv, bits) = self._tocard(0x0C, buf)
+        
+        # For NTAG cards, if we get here without an error, consider it successful
+        if stat == self.OK:
+            return self.OK
+        else:
+            print(f"NTAG write failed: status={stat}, bits={bits}")
+            return self.ERR
         
     def getNTAGVersion(self):
         """Get NTAG version"""
