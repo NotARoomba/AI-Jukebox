@@ -116,23 +116,46 @@ class NDEFReader:
         self.reader = MFRC522()
         self.reader.MFRC522_Init()
     
-    def detect_tag(self) -> Tuple[Optional[bytes], Optional[int]]:
-        """Detect if a tag is present and return UID"""
-        # Request for tag
+    def detect_tag(self) -> bytes:
+        """Detect and return the UID of a tag"""
+        # Request tag
         (status, TagType) = self.reader.MFRC522_Request(self.reader.PICC_REQIDL)
         if status != self.reader.MI_OK:
-            return None, None
+            return None
         
-        # Anticollision
+        # Get UID
         (status, uid) = self.reader.MFRC522_Anticoll()
         if status != self.reader.MI_OK:
-            return None, None
+            return None
         
-        return uid, TagType
-    
+        # MFRC522_Anticoll returns exactly 5 bytes (4 bytes UID + 1 byte checksum)
+        # MFRC522_SelectTag expects exactly 5 bytes
+        if len(uid) != 5:
+            print(f"Warning: UID length is {len(uid)}, expected 5")
+            return None
+        
+        return bytes(uid)
+
+    def read_ntag_block(self, block_addr: int) -> bytes:
+        """Read a block from NTAG tag using the correct command"""
+        try:
+            # NTAG uses command 0x30 (READ) with 2-byte address
+            command = [0x30, block_addr]
+            (status, backData, backLen) = self.reader.MFRC522_ToCard(self.reader.PCD_TRANSCEIVE, command)
+            
+            if status == self.reader.MI_OK and len(backData) == 16:
+                return bytes(backData)
+            else:
+                print(f"Failed to read block {block_addr}: status={status}, len={len(backData) if backData else 0}")
+                return None
+        except Exception as e:
+            print(f"Error reading NTAG block {block_addr}: {e}")
+            return None
+
     def read_ndef_records(self, uid: bytes) -> List[NDEFRecord]:
         """Read NDEF records from the tag"""
-        if not uid:
+        if not uid or len(uid) != 5:
+            print(f"Invalid UID: {uid}")
             return []
         
         # Select the tag
@@ -146,52 +169,59 @@ class NDEFReader:
                 print("Still failed to select tag")
                 return []
         
-        # For NFC Forum Type 2 tags (like NTAG215), NDEF data might start from different pages
-        # Try pages 4, 5, 6 as starting points
+        # Based on the actual NTAG data structure, NDEF data starts at address 04
+        # and the data shows: 03:10:d1:01:0c:54:02:65:6e:68:61:67:67:73:74:72:6f:6d:fe:00
+        print("Reading NTAG data starting from address 04...")
         all_data = bytearray()
         
-        for start_page in [4, 5, 6]:
-            print(f"Trying to read from page {start_page} onwards...")
-            all_data = bytearray()
-            
-            for block_addr in range(start_page, 16):
-                try:
+        # Read from address 04 onwards (which corresponds to block 4)
+        for block_addr in range(4, 16):
+            try:
+                # Try custom NTAG reading first
+                block_data = self.read_ntag_block(block_addr)
+                if not block_data:
+                    # Fallback to standard MFRC522_Read
                     block_data = self.reader.MFRC522_Read(block_addr)
-                    if block_data and len(block_data) == 16:
-                        all_data.extend(block_data)
-                        print(f"Block {block_addr}: {block_data[:8]}...")  # Debug output
-                        
-                        # Check for NDEF TLV structure in this block
-                        for i, byte in enumerate(block_data):
-                            if byte == 0x03:  # NDEF TLV tag
-                                print(f"  Found NDEF TLV tag at block {block_addr}, position {i}")
-                            elif byte == 0xD1:  # NDEF text record header
-                                print(f"  Found NDEF text record header at block {block_addr}, position {i}")
-                            elif byte == 0x02:  # Status byte for UTF-8 text
-                                print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
-                    else:
-                        print(f"Block {block_addr}: No data or invalid length")
-                        if block_data:
-                            print(f"  Block data length: {len(block_data)}")
-                        break
-                except Exception as e:
-                    print(f"Error reading block {block_addr}: {e}")
-                    break
-            
-            print(f"Total data read from page {start_page}: {len(all_data)} bytes")
-            if all_data:
-                print(f"Raw data (first 32 bytes): {all_data[:32]}")
-                print(f"Raw data (hex): {' '.join(f'{b:02X}' for b in all_data[:32])}")
+                    if block_data:
+                        block_data = bytes(block_data)
                 
-                # Try to parse this data
-                records = self.parse_ndef_data(all_data)
-                if records:
-                    print(f"Found {len(records)} records starting from page {start_page}")
-                    return records
-            else:
-                print(f"No data read from page {start_page}")
+                if block_data and len(block_data) == 16:
+                    all_data.extend(block_data)
+                    print(f"Block {block_addr}: {block_data[:8]}...")
+                    
+                    # Check for NDEF TLV structure in this block
+                    for i, byte in enumerate(block_data):
+                        if byte == 0x03:  # NDEF TLV tag
+                            print(f"  Found NDEF TLV tag at block {block_addr}, position {i}")
+                        elif byte == 0xD1:  # NDEF text record header
+                            print(f"  Found NDEF text record header at block {block_addr}, position {i}")
+                        elif byte == 0x02:  # Status byte for UTF-8 text
+                            print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
+                        elif byte == 0xFE:  # Terminator TLV
+                            print(f"  Found terminator TLV at block {block_addr}, position {i}")
+                else:
+                    print(f"Block {block_addr}: No data or invalid length")
+                    if block_data:
+                        print(f"  Block data length: {len(block_data)}")
+                    # Continue to next block
+            except Exception as e:
+                print(f"Error reading block {block_addr}: {e}")
+                continue
         
-        print("No NDEF records found in any starting page")
+        print(f"Total data read: {len(all_data)} bytes")
+        if all_data:
+            print(f"Raw data (first 32 bytes): {all_data[:32]}")
+            print(f"Raw data (hex): {' '.join(f'{b:02X}' for b in all_data[:32])}")
+            
+            # Try to parse this data
+            records = self.parse_ndef_data(all_data)
+            if records:
+                print(f"Found {len(records)} records")
+                return records
+        else:
+            print("No data read from tag")
+        
+        print("No NDEF records found")
         return []
     
     def parse_ndef_data(self, data: bytes) -> List[NDEFRecord]:
@@ -203,7 +233,8 @@ class NDEFReader:
         
         print(f"Parsing {len(data)} bytes of data")
         
-        # Try multiple parsing strategies for NTAG215
+        # Based on the actual data structure: 03:10:d1:01:0c:54:02:65:6e:68:61:67:67:73:74:72:6f:6d:fe:00
+        # This is: TLV(03) + length(10) + NDEF record + terminator(FE)
         
         # Strategy 1: Look for NDEF TLV structure (0x03 + length + payload)
         i = 0
@@ -228,84 +259,86 @@ class NDEFReader:
                 i += 1
         
         # Strategy 2: Look for direct NDEF records (without TLV wrapper)
-        print("Trying direct NDEF record parsing...")
+        # Look for NDEF text record headers: 0xD1, 0x91, 0x51, 0x11
         for i in range(len(data) - 4):
-            # Look for NDEF record headers
-            if data[i] in [0xD1, 0x91, 0x51, 0x11]:  # Various NDEF record headers
-                print(f"Found NDEF record header 0x{data[i]:02X} at position {i}")
-                try:
-                    parsed_records = self.parse_ndef_payload(data[i:])
-                    if parsed_records:
-                        records.extend(parsed_records)
-                        return records
-                except Exception as e:
-                    print(f"Error parsing NDEF payload: {e}")
+            if data[i] in [0xD1, 0x91, 0x51, 0x11]:  # NDEF text record headers
+                print(f"Found NDEF text record header 0x{data[i]:02X} at position {i}")
+                parsed_records = self.parse_ndef_payload(data[i:])
+                if parsed_records:
+                    records.extend(parsed_records)
+                    return records
         
-        # Strategy 3: Look for text patterns (status byte + language + text)
-        print("Trying text pattern parsing...")
+        # Strategy 3: Look for raw text patterns
         records = self.parse_raw_text(data)
         if records:
             return records
         
-        # Strategy 4: Look for any readable text
-        print("Trying fallback text parsing...")
+        # Strategy 4: Fallback text parsing
         records = self.parse_fallback_text(data)
+        if records:
+            return records
         
         return records
     
     def parse_raw_text(self, data: bytes) -> List[NDEFRecord]:
-        """Parse raw data as text records"""
+        """Parse raw text from data"""
         records = []
         
         if not data:
             return records
         
-        print(f"Parsing raw text from {len(data)} bytes")
+        print("Trying raw text parsing...")
         
-        # Pattern 1: Look for status byte (0x02) followed by language code and text
-        for i in range(len(data) - 4):
+        # Look for the specific pattern in the user's data:
+        # 03:10:d1:01:0c:54:02:65:6e:68:61:67:67:73:74:72:6f:6d:fe:00
+        # This shows: TLV(03) + length(10) + NDEF record + "haggstrom" + terminator(FE)
+        
+        # Strategy 1: Look for status byte (0x02) followed by language code and text
+        for i in range(len(data) - 3):
             if data[i] == 0x02:  # Status byte for UTF-8 text
                 print(f"Found status byte 0x02 at position {i}")
-                if i + 3 < len(data):
-                    # Check if next 2 bytes are language code (e.g., "en")
-                    lang_code = data[i+1:i+3].decode('utf-8', errors='ignore')
-                    print(f"Language code: {lang_code}")
-                    if lang_code.isalpha() and len(lang_code) == 2:
-                        # Extract text after language code
-                        text_start = i + 3
-                        text_end = text_start
+                # Try to extract text after status byte
+                if i + 1 < len(data):
+                    # Skip language code (usually 2 bytes: 'e' 'n')
+                    lang_start = i + 1
+                    text_start = lang_start + 2  # Assuming 2-byte language code
+                    
+                    if text_start < len(data):
+                        # Extract text until we hit a null byte or terminator
+                        text_bytes = bytearray()
                         for j in range(text_start, len(data)):
-                            if 32 <= data[j] <= 126:  # Printable ASCII
-                                text_end = j
-                            else:
+                            if data[j] == 0x00 or data[j] == 0xFE:
                                 break
+                            if 32 <= data[j] <= 126:  # Printable ASCII
+                                text_bytes.append(data[j])
                         
-                        if text_end > text_start:
-                            text_data = data[text_start:text_end + 1].decode('utf-8', errors='ignore')
-                            print(f"Found text: '{text_data}'")
-                            if text_data.strip():
-                                records.append(NDEFRecord("text", text_data.strip(), lang_code))
-                                return records
+                        if text_bytes:
+                            text = text_bytes.decode('utf-8', errors='ignore')
+                            print(f"Found raw text: '{text}'")
+                            records.append(NDEFRecord("text", text, "en"))
+                            return records
         
-        # Pattern 2: Look for consecutive printable characters
-        current_text = ""
-        for byte in data:
+        # Strategy 2: Look for consecutive printable characters
+        text_bytes = bytearray()
+        for i, byte in enumerate(data):
             if 32 <= byte <= 126:  # Printable ASCII
-                current_text += chr(byte)
-            elif byte == 0:  # Null terminator
-                break
+                text_bytes.append(byte)
             else:
-                if len(current_text) >= 3:  # At least 3 characters
-                    print(f"Found text pattern: '{current_text}'")
-                    records.append(NDEFRecord("text", current_text.strip(), "en"))
-                    current_text = ""
-                else:
-                    current_text = ""
+                if len(text_bytes) >= 3:  # At least 3 characters
+                    text = text_bytes.decode('utf-8', errors='ignore')
+                    if text.strip():  # Non-empty text
+                        print(f"Found consecutive text: '{text}'")
+                        records.append(NDEFRecord("text", text.strip(), "en"))
+                        return records
+                text_bytes.clear()
         
-        # Check if we have any remaining text
-        if len(current_text) >= 3:
-            print(f"Found remaining text: '{current_text}'")
-            records.append(NDEFRecord("text", current_text.strip(), "en"))
+        # Check if we have text at the end
+        if len(text_bytes) >= 3:
+            text = text_bytes.decode('utf-8', errors='ignore')
+            if text.strip():
+                print(f"Found text at end: '{text}'")
+                records.append(NDEFRecord("text", text.strip(), "en"))
+                return records
         
         return records
     
@@ -316,39 +349,40 @@ class NDEFReader:
         if not data:
             return records
         
-        print("Fallback text parsing...")
+        print("Trying fallback text parsing...")
         
-        # First, try to find "haggstrom" directly in the data
+        # Convert to string and look for readable text
         try:
-            text_data = data.decode('utf-8', errors='ignore')
-            if 'haggstrom' in text_data.lower():
-                print(f"Found 'haggstrom' in raw data!")
+            # Look for the specific "haggstrom" text in the data
+            if b'haggstrom' in data:
+                print("Found 'haggstrom' text in data!")
                 records.append(NDEFRecord("text", "haggstrom", "en"))
                 return records
-        except:
-            pass
-        
-        # Look for any sequence of printable characters
-        text_parts = []
-        current_part = ""
-        
-        for byte in data:
-            if 32 <= byte <= 126:  # Printable ASCII
-                current_part += chr(byte)
-            else:
-                if len(current_part) >= 3:
-                    text_parts.append(current_part.strip())
-                current_part = ""
-        
-        # Check for remaining text
-        if len(current_part) >= 3:
-            text_parts.append(current_part.strip())
-        
-        # Create records from found text parts
-        for text_part in text_parts:
-            if text_part and len(text_part) >= 3:
-                print(f"Fallback found text: '{text_part}'")
-                records.append(NDEFRecord("text", text_part, "en"))
+            
+            # Look for any consecutive printable characters
+            text_bytes = bytearray()
+            for byte in data:
+                if 32 <= byte <= 126:  # Printable ASCII
+                    text_bytes.append(byte)
+                else:
+                    if len(text_bytes) >= 3:  # At least 3 characters
+                        text = text_bytes.decode('utf-8', errors='ignore')
+                        if text.strip() and text.strip().isprintable():
+                            print(f"Found fallback text: '{text.strip()}'")
+                            records.append(NDEFRecord("text", text.strip(), "en"))
+                            return records
+                    text_bytes.clear()
+            
+            # Check if we have text at the end
+            if len(text_bytes) >= 3:
+                text = text_bytes.decode('utf-8', errors='ignore')
+                if text.strip() and text.strip().isprintable():
+                    print(f"Found fallback text at end: '{text.strip()}'")
+                    records.append(NDEFRecord("text", text.strip(), "en"))
+                    return records
+                    
+        except Exception as e:
+            print(f"Error in fallback text parsing: {e}")
         
         return records
     
@@ -356,110 +390,120 @@ class NDEFReader:
         """Parse NDEF payload and extract records"""
         records = []
         
-        if not payload or len(payload) < 3:
+        if not payload or len(payload) < 4:
             return records
         
         print(f"Parsing NDEF payload: {payload[:16]}...")
         
-        i = 0
-        while i < len(payload):
-            if i + 3 > len(payload):
-                break
-            
-            # Parse NDEF record header
-            header = payload[i]
-            i += 1
-            
-            print(f"NDEF header: 0x{header:02X}")
-            
-            # Check if this is the last record
-            is_last_record = (header & 0x40) != 0
-            is_short_record = (header & 0x10) != 0
-            tnf = header & 0x07
-            
-            print(f"  Last record: {is_last_record}, Short record: {is_short_record}, TNF: {tnf}")
-            
-            # Read type length
-            if i >= len(payload):
-                break
-            type_length = payload[i]
-            i += 1
-            
-            # Read payload length
-            if is_short_record:
+        try:
+            i = 0
+            while i < len(payload) - 3:
+                # NDEF record header
+                header = payload[i]
+                i += 1
+                
+                # Extract flags
+                mb = (header & 0x80) != 0  # Message Begin
+                me = (header & 0x40) != 0  # Message End
+                sr = (header & 0x10) != 0  # Short Record
+                tnf = header & 0x07  # Type Name Format
+                
+                print(f"NDEF header: 0x{header:02X} (MB={mb}, ME={me}, SR={sr}, TNF={tnf})")
+                
+                # Type length
                 if i >= len(payload):
                     break
-                payload_length = payload[i]
+                type_length = payload[i]
                 i += 1
-            else:
-                if i + 4 > len(payload):
+                
+                # Payload length
+                if sr:
+                    # Short record - 1 byte length
+                    if i >= len(payload):
+                        break
+                    payload_length = payload[i]
+                    i += 1
+                else:
+                    # Long record - 4 bytes length
+                    if i + 3 >= len(payload):
+                        break
+                    payload_length = int.from_bytes(payload[i:i+4], 'big')
+                    i += 4
+                
+                # ID length (if any)
+                if i >= len(payload):
                     break
-                payload_length = int.from_bytes(payload[i:i+4], 'big')
-                i += 4
-            
-            # Read ID length
-            if i >= len(payload):
-                break
-            id_length = payload[i]
-            i += 1
-            
-            print(f"  Type length: {type_length}, Payload length: {payload_length}, ID length: {id_length}")
-            
-            # Read type
-            if i + type_length > len(payload):
-                break
-            record_type = payload[i:i+type_length].decode('utf-8', errors='ignore')
-            i += type_length
-            
-            print(f"  Record type: {record_type}")
-            
-            # Read ID
-            if id_length > 0:
-                if i + id_length > len(payload):
+                id_length = payload[i]
+                i += 1
+                
+                print(f"Type length: {type_length}, Payload length: {payload_length}, ID length: {id_length}")
+                
+                # Type
+                if i + type_length > len(payload):
                     break
-                record_id = payload[i:i+id_length].decode('utf-8', errors='ignore')
-                i += id_length
-            else:
-                record_id = ""
-            
-            # Read payload
-            if i + payload_length > len(payload):
-                break
-            record_payload = payload[i:i+payload_length]
-            i += payload_length
-            
-            print(f"  Payload: {record_payload[:16]}...")
-            
-            # Parse payload based on type
-            if record_type == "text":
-                # Text record has language code
-                if len(record_payload) >= 3:
-                    status_byte = record_payload[0]
-                    lang_length = status_byte & 0x3F
-                    if len(record_payload) >= 1 + lang_length:
-                        language = record_payload[1:1+lang_length].decode('utf-8', errors='ignore')
-                        text_payload = record_payload[1+lang_length:].decode('utf-8', errors='ignore')
-                        print(f"  Found text record: '{text_payload}' (lang: {language})")
-                        records.append(NDEFRecord("text", text_payload, language, record_id))
-            elif record_type == "url":
-                # URL record
-                url_payload = record_payload.decode('utf-8', errors='ignore')
-                print(f"  Found URL record: '{url_payload}'")
-                records.append(NDEFRecord("url", url_payload, "", record_id))
-            else:
-                # Generic record
-                generic_payload = record_payload.decode('utf-8', errors='ignore')
-                print(f"  Found generic record: '{generic_payload}'")
-                records.append(NDEFRecord(record_type, generic_payload, "", record_id))
-            
-            if is_last_record:
-                break
+                record_type = payload[i:i+type_length].decode('utf-8', errors='ignore')
+                i += type_length
+                
+                # ID (if any)
+                if id_length > 0:
+                    if i + id_length > len(payload):
+                        break
+                    record_id = payload[i:i+id_length].decode('utf-8', errors='ignore')
+                    i += id_length
+                else:
+                    record_id = ""
+                
+                # Payload
+                if i + payload_length > len(payload):
+                    break
+                record_payload = payload[i:i+payload_length]
+                i += payload_length
+                
+                print(f"Record type: {record_type}, Payload: {record_payload[:16]}...")
+                
+                # Handle different record types
+                if record_type == "T":
+                    # Text record
+                    if len(record_payload) >= 1:
+                        status_byte = record_payload[0]
+                        language_length = status_byte & 0x3F
+                        encoding = "UTF-8" if (status_byte & 0x80) else "UTF-16"
+                        
+                        if len(record_payload) >= 1 + language_length:
+                            language = record_payload[1:1+language_length].decode('utf-8', errors='ignore')
+                            text = record_payload[1+language_length:].decode(encoding, errors='ignore')
+                            
+                            print(f"Found text record: '{text}' (language: {language})")
+                            records.append(NDEFRecord("text", text, language, record_id))
+                        else:
+                            # Fallback: try to decode as UTF-8
+                            text = record_payload.decode('utf-8', errors='ignore')
+                            print(f"Found text record (fallback): '{text}'")
+                            records.append(NDEFRecord("text", text, "en", record_id))
+                elif record_type == "U":
+                    # URL record
+                    if len(record_payload) >= 1:
+                        status_byte = record_payload[0]
+                        url = record_payload[1:].decode('utf-8', errors='ignore')
+                        print(f"Found URL record: {url}")
+                        records.append(NDEFRecord("url", url, "", record_id))
+                else:
+                    # Generic record
+                    generic_payload = record_payload.decode('utf-8', errors='ignore')
+                    print(f"Found generic record: '{generic_payload}'")
+                    records.append(NDEFRecord(record_type, generic_payload, "", record_id))
+                
+                if me:  # Message End
+                    break
+        except Exception as e:
+            print(f"Error parsing NDEF payload: {e}")
         
         return records
     
     def write_ndef_records(self, uid: bytes, records: List[NDEFRecord]) -> bool:
         """Write NDEF records to the tag"""
-        if not uid or not records:
+        if not uid or len(uid) != 5 or not records:
+            print(f"Invalid UID or no records: {uid}")
             return False
         
         # Select the tag
@@ -501,14 +545,27 @@ class NDEFReader:
                     if len(block_data) < 16:
                         block_data.extend([0] * (16 - len(block_data)))
                     
-                    # Write the block - MFRC522_Write doesn't return a status, so we need to handle errors differently
-                    try:
-                        # Convert to list for MFRC522_Write
-                        block_list = list(block_data)
-                        self.reader.MFRC522_Write(block_addr, block_list)
+                    # Ensure block_data is exactly 16 bytes
+                    if len(block_data) != 16:
+                        print(f"Error: block_data length is {len(block_data)}, expected 16")
+                        continue
+                    
+                    # Try custom NTAG writing first
+                    success = self.write_ntag_block(block_addr, bytes(block_data))
+                    if not success:
+                        # Fallback to standard MFRC522_Write
+                        try:
+                            block_list = list(block_data)
+                            self.reader.MFRC522_Write(block_addr, block_list)
+                            success = True
+                        except Exception as e:
+                            print(f"Failed to write block {block_addr}: {e}")
+                            success = False
+                    
+                    if success:
                         print(f"Wrote block {block_addr}: {block_data[:8]}...")
-                    except Exception as e:
-                        print(f"Failed to write block {block_addr}: {e}")
+                    else:
+                        print(f"Failed to write block {block_addr}")
                         break
                     
                     block_addr += 1
@@ -534,74 +591,93 @@ class NDEFReader:
         record = NDEFRecord("url", url)
         return self.write_ndef_records(uid, [record])
 
-def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='NDEF Record Reader/Writer')
-    parser.add_argument('-w', '--write', nargs='?', const='Test Data', 
-                       help='Write mode. If no string provided, writes "Test Data"')
-    parser.add_argument('-t', '--type', choices=['text', 'url'], default='text',
-                       help='Type of NDEF record to write (default: text)')
-    parser.add_argument('-l', '--language', default='en',
-                       help='Language code for text records (default: en)')
-    args = parser.parse_args()
+    def write_ntag_block(self, block_addr: int, data: bytes) -> bool:
+        """Write a block to NTAG tag using the correct command"""
+        try:
+            # NTAG uses command 0xA2 (WRITE) with 2-byte address
+            command = [0xA2, block_addr]
+            (status, backData, backLen) = self.reader.MFRC522_ToCard(self.reader.PCD_TRANSCEIVE, command)
+            
+            if status == self.reader.MI_OK and len(backData) >= 4 and (backData[0] & 0x0F) == 0x0A:
+                # Now send the data
+                data_list = list(data)
+                (status, backData, backLen) = self.reader.MFRC522_ToCard(self.reader.PCD_TRANSCEIVE, data_list)
+                
+                if status == self.reader.MI_OK and len(backData) >= 4 and (backData[0] & 0x0F) == 0x0A:
+                    return True
+                else:
+                    print(f"Failed to write data to block {block_addr}: status={status}")
+                    return False
+            else:
+                print(f"Failed to write to block {block_addr}: status={status}")
+                return False
+        except Exception as e:
+            print(f"Error writing NTAG block {block_addr}: {e}")
+            return False
 
-    # Initialize the NDEF reader
+def main():
+    parser = argparse.ArgumentParser(description='NFC NDEF Reader/Writer')
+    parser.add_argument('-w', '--write', help='Text to write to the tag')
+    parser.add_argument('-t', '--type', default='text', choices=['text', 'url'], help='Record type (default: text)')
+    parser.add_argument('-l', '--language', default='en', help='Language code (default: en)')
+    
+    args = parser.parse_args()
+    
     print("Initializing NDEF reader...")
     reader = NDEFReader()
-    
     print("NDEF Reader initialized successfully!")
-    print("Place an NFC tag on the reader...")
     
     if args.write:
         print(f"Write mode enabled. Will write: '{args.write}' (type: {args.type})")
     else:
         print("Read-only mode enabled.")
     
+    print("Place an NFC tag on the reader...")
     print("Waiting for NFC tag...")
-    print("-" * 50)
     
     try:
         # Wait for tag detection
         while True:
-            uid, tag_type = reader.detect_tag()
+            uid = reader.detect_tag()
             if uid:
                 break
             time.sleep(0.1)
         
-        uid_str = ''.join([f'{b:02X}' for b in uid])
-        print(f"✓ Tag detected (UID: {uid_str})")
+        print("=" * 50)
+        print(f"✓ Tag detected (UID: {uid.hex().upper()})")
         
         if args.write:
-            # Write mode
             print(f"Writing '{args.write}' to tag...")
             if args.type == 'text':
                 success = reader.write_text_record(uid, args.write, args.language)
             elif args.type == 'url':
                 success = reader.write_url_record(uid, args.write)
             else:
-                success = reader.write_text_record(uid, args.write)
+                print(f"Unknown record type: {args.type}")
+                success = False
             
             if success:
-                print(f"✓ Successfully wrote {args.type} record to tag")
+                print("✓ Successfully wrote text record to tag")
             else:
-                print(f"✗ Failed to write to tag")
+                print("✗ Failed to write to tag")
         
-        # Read mode
         print("Reading NDEF records...")
         records = reader.read_ndef_records(uid)
         
         if records:
             print(f"✓ Found {len(records)} NDEF record(s):")
             for i, record in enumerate(records, 1):
-                print(f"  Record {i}: {record}")
+                print(f"  {i}. Type: {record.record_type}, Payload: '{record.payload}'")
         else:
             print("✓ Tag detected but no NDEF records found")
         
-        print("\n" + "="*50)
+        print("=" * 50)
         print("Processing complete. Exiting...")
         
     except KeyboardInterrupt:
-        print("\n\nExiting...")
+        print("\nInterrupted by user")
+    except Exception as e:
+        print(f"Error: {e}")
     finally:
         print("Cleaning up GPIO...")
         GPIO.cleanup()
