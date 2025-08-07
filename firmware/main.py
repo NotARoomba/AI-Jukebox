@@ -4,10 +4,21 @@
 # Given that most of the non-AI code was cobbled together from posts on Reddit, StackOverflow, and the Raspberry Pi forum, this code is exempted from the GNU GPLv3 that the rest of the repository is under. I take no credit or ownership of its contents, and you are free to do whatever you want with it.
 
 import RPi.GPIO as GPIO
-from mfrc522 import SimpleMFRC522
 import vlc
 import time
 import requests
+
+# Try to import the local mfrc522 library
+try:
+    from mfrc522.SimpleMFRC522 import SimpleMFRC522
+    MFRC522_AVAILABLE = True
+except ImportError:
+    # Fallback to global mfrc522 if local not available
+    try:
+        from mfrc522 import SimpleMFRC522
+        MFRC522_AVAILABLE = True
+    except ImportError:
+        MFRC522_AVAILABLE = False
 
 # Try to import enhanced reader and decoder
 try:
@@ -181,9 +192,13 @@ def main():
         reader = EnhancedRFIDReader()
         use_enhanced = True
     else:
-        print("⚠ Using basic RFID reader (enhanced features not available)")
-        reader = SimpleMFRC522()
-        use_enhanced = False
+        if MFRC522_AVAILABLE:
+            print("⚠ Using basic RFID reader (enhanced features not available)")
+            reader = SimpleMFRC522()
+            use_enhanced = False
+        else:
+            print("✗ No MFRC522 library available")
+            return
 
     # Minecraft songs will be formatted using m_{song_name}
     # e.g. m_minecraft, m_chirp, m_cat, etc.

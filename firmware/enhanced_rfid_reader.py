@@ -10,7 +10,19 @@ import RPi.GPIO as GPIO
 import time
 import sys
 from typing import Dict, Optional, Tuple, Union
-from mfrc522 import MFRC522
+
+# Import the local mfrc522 library
+try:
+    from mfrc522.MFRC522 import MFRC522
+    MFRC522_AVAILABLE = True
+except ImportError:
+    # Fallback to global mfrc522 if local not available
+    try:
+        from mfrc522 import MFRC522
+        MFRC522_AVAILABLE = True
+    except ImportError:
+        MFRC522_AVAILABLE = False
+
 from ntag215_decoder import NTAG215Decoder, decode_ntag215_raw_data
 
 class EnhancedRFIDReader:
@@ -18,6 +30,8 @@ class EnhancedRFIDReader:
     
     def __init__(self):
         """Initialize the enhanced RFID reader"""
+        if not MFRC522_AVAILABLE:
+            raise ImportError("MFRC522 library not available")
         self.reader = MFRC522()
         self.ntag_decoder = None
         

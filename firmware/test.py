@@ -25,6 +25,15 @@ except ImportError as e:
     print(f"Enhanced reader not available: {e}")
     ENHANCED_AVAILABLE = False
 
+# Import the local mfrc522 library
+try:
+    from mfrc522.MFRC522 import MFRC522
+    from mfrc522.SimpleMFRC522 import SimpleMFRC522
+    MFRC522_AVAILABLE = True
+except ImportError as e:
+    print(f"Local MFRC522 library not available: {e}")
+    MFRC522_AVAILABLE = False
+
 # Initialize GPIO
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
@@ -38,9 +47,11 @@ class NTAG215Tester:
             self.reader = EnhancedRFIDReader()
             self.use_enhanced = True
         else:
-            from mfrc522 import SimpleMFRC522
-            self.reader = SimpleMFRC522()
-            self.use_enhanced = False
+            if MFRC522_AVAILABLE:
+                self.reader = SimpleMFRC522()
+                self.use_enhanced = False
+            else:
+                raise ImportError("No MFRC522 library available")
     
     def read_tag(self) -> Optional[dict]:
         """
@@ -166,7 +177,7 @@ class NTAG215Tester:
             return False
     
     def _write_with_enhanced_reader(self, text: str) -> bool:
-        """Write using enhanced reader"""
+        """Write using enhanced reader with MFRC522_WriteUltralight"""
         try:
             # Initialize the reader
             self.reader.reader.MFRC522_Init()
@@ -199,7 +210,7 @@ class NTAG215Tester:
             total_pages_needed = (len(text_bytes) + 3) // 4  # Ceiling division
             print(f"Need to write {total_pages_needed} pages for {len(text_bytes)} bytes")
             
-            # Write text bytes to user data area
+            # Write text bytes to user data area using MFRC522_WriteUltralight
             for i in range(0, len(text_bytes), 4):
                 page = user_data_start_page + (i // 4)
                 
@@ -215,20 +226,16 @@ class NTAG215Tester:
                 
                 print(f"Preparing page {page}: {bytes(page_data).hex().upper()}")
                 
-                # Write page using custom NTAG215 write method
+                # Write page using MFRC522_WriteUltralight
                 try:
                     print(f"Writing page {page} with data: {page_data}")
-                    success = self._write_ntag215_page(page, page_data)
-                    if success:
-                        bytes_written += min(4, len(text_bytes) - i)
-                        print(f"✓ Wrote page {page}: {bytes(page_data).hex().upper()}")
-                    else:
-                        print(f"✗ Failed to write page {page}")
-                        return False
+                    # MFRC522_WriteUltralight handles errors internally and logs them
+                    self.reader.reader.MFRC522_WriteUltralight(page, page_data)
+                    bytes_written += min(4, len(text_bytes) - i)
+                    print(f"✓ Wrote page {page}: {bytes(page_data).hex().upper()}")
+                        
                 except Exception as e:
                     print(f"✗ Failed to write page {page}: {e}")
-                    print(f"  Page data: {page_data}")
-                    print(f"  Page data length: {len(page_data)}")
                     return False
             
             print(f"✓ Successfully wrote {bytes_written} bytes to tag")
@@ -242,155 +249,6 @@ class NTAG215Tester:
         finally:
             # Stop crypto
             self.reader.reader.MFRC522_StopCrypto1()
-    
-    def _write_ntag215_page(self, page: int, data: list) -> bool:
-        """
-        Write a single page to NTAG215 tag
-        
-        Args:
-            page: Page number (0-35)
-            data: 4-byte data to write
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Ensure data is exactly 4 bytes
-            if len(data) != 4:
-                print(f"Error: Data must be exactly 4 bytes, got {len(data)}")
-                return False
-            
-            # Check if page is valid for NTAG215
-            if page < 0 or page > 35:
-                print(f"Error: Invalid page number {page} for NTAG215 (0-35)")
-                return False
-            
-            # Check if page is writable (pages 0-3 are reserved)
-            if page < 4:
-                print(f"Warning: Writing to reserved page {page} may cause issues")
-            
-            # Prepare write command for NTAG215
-            # NTAG215 write command: 0xA2 + page_address + 4 bytes of data + CRC
-            write_cmd = [0xA2, page] + data
-            
-            # Calculate CRC for the command
-            crc = self._calculate_crc(write_cmd)
-            write_cmd.extend(crc)
-            
-            print(f"Send command: {[hex(x) for x in write_cmd]}")
-            
-            # Send the write command
-            try:
-                (status, backData, backLen) = self.reader.reader.MFRC522_ToCard(
-                    self.reader.reader.PCD_TRANSCEIVE, write_cmd
-                )
-            except Exception as e:
-                print(f"Error calling MFRC522_ToCard: {e}")
-                return False
-            
-            print(f"Response - status: {status}, backData: {backData}, backLen: {backLen}")
-            
-            if status == self.reader.reader.MI_OK:
-                # Check if write was successful
-                # NTAG215 should return 4 bytes with ACK (0x0A) for successful writes
-                if backLen == 4 and len(backData) > 0:
-                    ack = backData[0] & 0x0F
-                    if ack == 0x0A:
-                        print(f"✓ Write successful - ACK: 0x{ack:02X}")
-                        return True
-                    else:
-                        print(f"✗ Write failed - unexpected ACK: 0x{ack:02X}")
-                        # Try to provide more specific error information
-                        if ack == 0x00:
-                            print("  Possible cause: Page is locked or read-only")
-                        elif ack == 0x01:
-                            print("  Possible cause: Invalid page address")
-                        elif ack == 0x02:
-                            print("  Possible cause: Write error")
-                        return False
-                else:
-                    print(f"✗ Write failed - expected 4 bytes response, got {backLen}")
-                    if len(backData) > 0:
-                        print(f"  Response data: {backData}")
-                    return False
-            else:
-                print(f"✗ Write failed - status: {status}")
-                if status == self.reader.reader.MI_NOTAGERR:
-                    print("  Possible cause: Tag was removed during write")
-                elif status == self.reader.reader.MI_ERR:
-                    print("  Possible cause: Communication error")
-                return False
-                
-        except Exception as e:
-            print(f"Error in _write_ntag215_page: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    def _calculate_crc(self, data: list) -> list:
-        """
-        Calculate CRC for NTAG215 write command
-        
-        Args:
-            data: List of bytes to calculate CRC for
-            
-        Returns:
-            List of 2 bytes representing the CRC
-        """
-        try:
-            # Use the existing CRC calculation method from MFRC522
-            # The method is misspelled as 'CalulateCRC' in the original library
-            if hasattr(self.reader.reader, 'CalulateCRC'):
-                crc_result = self.reader.reader.CalulateCRC(data)
-                print(f"CRC calculated: {crc_result}")
-                return crc_result
-            else:
-                print("CalulateCRC method not found, using manual calculation")
-                return self._calculate_crc_manual(data)
-        except Exception as e:
-            print(f"Error calculating CRC: {e}")
-            # Fallback: return zeros if CRC calculation fails
-            return [0x00, 0x00]
-    
-    def _calculate_crc_manual(self, data: list) -> list:
-        """
-        Manual CRC calculation for NTAG215 (fallback method)
-        
-        Args:
-            data: List of bytes to calculate CRC for
-            
-        Returns:
-            List of 2 bytes representing the CRC
-        """
-        try:
-            # Clear CRC registers
-            self.reader.reader.ClearBitMask(self.reader.reader.DivIrqReg, 0x04)
-            self.reader.reader.SetBitMask(self.reader.reader.FIFOLevelReg, 0x80)
-            
-            # Write data to FIFO
-            for byte in data:
-                self.reader.reader.Write_MFRC522(self.reader.reader.FIFODataReg, byte)
-            
-            # Start CRC calculation
-            self.reader.reader.Write_MFRC522(self.reader.reader.CommandReg, self.reader.reader.PCD_CALCCRC)
-            
-            # Wait for CRC calculation to complete
-            i = 0xFF
-            while True:
-                n = self.reader.reader.Read_MFRC522(self.reader.reader.DivIrqReg)
-                i -= 1
-                if not ((i != 0) and not (n & 0x04)):
-                    break
-            
-            # Read CRC result
-            crc_low = self.reader.reader.Read_MFRC522(self.reader.reader.CRCResultRegL)
-            crc_high = self.reader.reader.Read_MFRC522(self.reader.reader.CRCResultRegM)
-            
-            return [crc_low, crc_high]
-            
-        except Exception as e:
-            print(f"Error in manual CRC calculation: {e}")
-            return [0x00, 0x00]
     
     def _write_with_basic_reader(self, text: str) -> bool:
         """Write using basic reader"""
@@ -424,6 +282,11 @@ def main():
         print("✓ Enhanced RFID reader with NTAG215 support available")
     else:
         print("⚠ Using basic RFID reader (enhanced features not available)")
+    
+    if MFRC522_AVAILABLE:
+        print("✓ Local MFRC522 library available")
+    else:
+        print("⚠ Local MFRC522 library not available")
     
     tester = NTAG215Tester()
     
