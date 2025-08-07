@@ -6,15 +6,15 @@ This script provides a unified interface for testing NTAG215 NFC tags.
 It can read from tags and write data to tags.
 
 Usage:
-    python test.py          # Read from tag
-    python test.py -w "text"  # Write text to tag
+    python ntag215_test.py          # Read from tag
+    python ntag215_test.py -w "text"  # Write text to tag
 """
 
 import argparse
 import sys
 import time
 import RPi.GPIO as GPIO
-from typing import Optional
+from typing import Optional, Tuple
 
 # Try to import the enhanced reader and decoder
 try:
