@@ -189,37 +189,51 @@ class NTAG215Tester:
             
             # Convert text to bytes
             text_bytes = text.encode('utf-8')
+            print(f"Text bytes: {text_bytes.hex().upper()}")
             
             # Write to user data area (starting from page 4)
             user_data_start_page = 4
             bytes_written = 0
             
+            # Calculate how many pages we need
+            total_pages_needed = (len(text_bytes) + 3) // 4  # Ceiling division
+            print(f"Need to write {total_pages_needed} pages for {len(text_bytes)} bytes")
+            
             # Write text bytes to user data area
             for i in range(0, len(text_bytes), 4):
                 page = user_data_start_page + (i // 4)
-                page_data = bytearray(4)
                 
-                # Fill page with text data
+                # Create a 4-byte page data array
+                page_data = [0x00] * 4  # Initialize with zeros
+                
+                # Fill page with text data - ensure we don't go out of bounds
                 for j in range(4):
                     if i + j < len(text_bytes):
                         page_data[j] = text_bytes[i + j]
                     else:
                         page_data[j] = 0x00  # Fill with zeros
                 
-                # Write page
-                (status, _) = self.reader.reader.MFRC522_Write(page, list(page_data))
-                if status != self.reader.reader.MI_OK:
-                    print(f"Failed to write page {page}")
-                    return False
+                print(f"Preparing page {page}: {bytes(page_data).hex().upper()}")
                 
-                bytes_written += min(4, len(text_bytes) - i)
-                print(f"Wrote page {page}: {page_data.hex().upper()}")
+                # Write page - MFRC522_Write doesn't return a tuple
+                try:
+                    print(f"Writing page {page} with data: {page_data}")
+                    self.reader.reader.MFRC522_Write(page, page_data)
+                    bytes_written += min(4, len(text_bytes) - i)
+                    print(f"✓ Wrote page {page}: {bytes(page_data).hex().upper()}")
+                except Exception as e:
+                    print(f"✗ Failed to write page {page}: {e}")
+                    print(f"  Page data: {page_data}")
+                    print(f"  Page data length: {len(page_data)}")
+                    return False
             
             print(f"✓ Successfully wrote {bytes_written} bytes to tag")
             return True
             
         except Exception as e:
             print(f"Error writing with enhanced reader: {e}")
+            import traceback
+            traceback.print_exc()
             return False
         finally:
             # Stop crypto

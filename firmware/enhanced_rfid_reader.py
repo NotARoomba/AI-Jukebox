@@ -56,14 +56,38 @@ class EnhancedRFIDReader:
             
             for page in range(36):  # NTAG215 has 36 pages
                 try:
-                    # Read 4 bytes from the page
-                    (status, data) = self.reader.MFRC522_Read(page)
-                    if status == self.reader.MI_OK:
-                        raw_data.extend(data)
+                    # For NTAG215, we need to read 4 bytes per page
+                    # MFRC522_Read returns the data directly as a list of bytes
+                    data = self.reader.MFRC522_Read(page)
+                    
+                    if data is not None:
+                        # Handle different return types from MFRC522_Read
+                        if isinstance(data, (list, tuple)):
+                            data_list = list(data)
+                        elif isinstance(data, bytes):
+                            data_list = list(data)
+                        elif isinstance(data, int):
+                            data_list = [data]
+                        else:
+                            # Try to convert to list
+                            try:
+                                data_list = list(data)
+                            except:
+                                data_list = [0x00] * 4
+                        
+                        # NTAG215 has 4 bytes per page, but MFRC522_Read might return 16 bytes
+                        # We need to take only the first 4 bytes for NTAG215
+                        if len(data_list) >= 4:
+                            raw_data.extend(data_list[:4])
+                        else:
+                            # If we get less than 4 bytes, pad with zeros
+                            raw_data.extend(data_list)
+                            raw_data.extend([0x00] * (4 - len(data_list)))
                     else:
                         print(f"Failed to read page {page}")
                         # Fill with zeros if read fails
                         raw_data.extend([0x00] * 4)
+                        
                 except Exception as e:
                     print(f"Error reading page {page}: {e}")
                     raw_data.extend([0x00] * 4)
@@ -141,9 +165,28 @@ class EnhancedRFIDReader:
             
             for page in range(4, 130):  # User data pages
                 try:
-                    (status, data) = self.reader.MFRC522_Read(page)
-                    if status == self.reader.MI_OK:
-                        user_data.extend(data)
+                    # MFRC522_Read returns just the data, not (status, data)
+                    data = self.reader.MFRC522_Read(page)
+                    if data is not None:
+                        # Handle different return types from MFRC522_Read
+                        if isinstance(data, (list, tuple)):
+                            data_list = list(data)
+                        elif isinstance(data, bytes):
+                            data_list = list(data)
+                        elif isinstance(data, int):
+                            data_list = [data]
+                        else:
+                            # Try to convert to list
+                            try:
+                                data_list = list(data)
+                            except:
+                                data_list = [0x00] * 4
+                        
+                        if len(data_list) >= 4:
+                            user_data.extend(data_list[:4])
+                        else:
+                            user_data.extend(data_list)
+                            user_data.extend([0x00] * (4 - len(data_list)))
                     else:
                         break
                 except:
