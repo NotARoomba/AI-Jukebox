@@ -138,49 +138,61 @@ class NDEFReader:
         # Select the tag
         status = self.reader.MFRC522_SelectTag(uid)
         if status != self.reader.MI_OK:
-            print("Failed to select tag")
-            return []
+            print("Failed to select tag, trying alternative approach...")
+            # Try to re-select the tag
+            time.sleep(0.1)
+            status = self.reader.MFRC522_SelectTag(uid)
+            if status != self.reader.MI_OK:
+                print("Still failed to select tag")
+                return []
         
-        # For NFC Forum Type 2 tags (like NTAG215), NDEF data starts from page 4
-        # Read data from blocks 4-15 (typical NDEF area for Type 2 tags)
+        # For NFC Forum Type 2 tags (like NTAG215), NDEF data might start from different pages
+        # Try pages 4, 5, 6 as starting points
         all_data = bytearray()
         
-        print("Reading from page 4 (block 4) onwards for NFC Forum Type 2 format...")
-        
-        for block_addr in range(4, 16):
-            try:
-                block_data = self.reader.MFRC522_Read(block_addr)
-                if block_data and len(block_data) == 16:
-                    all_data.extend(block_data)
-                    print(f"Block {block_addr}: {block_data[:8]}...")  # Debug output
-                    
-                    # Check for NDEF TLV structure in this block
-                    for i, byte in enumerate(block_data):
-                        if byte == 0x03:  # NDEF TLV tag
-                            print(f"  Found NDEF TLV tag at block {block_addr}, position {i}")
-                        elif byte == 0xD1:  # NDEF text record header
-                            print(f"  Found NDEF text record header at block {block_addr}, position {i}")
-                        elif byte == 0x02:  # Status byte for UTF-8 text
-                            print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
-                else:
-                    print(f"Block {block_addr}: No data or invalid length")
-                    if block_data:
-                        print(f"  Block data length: {len(block_data)}")
+        for start_page in [4, 5, 6]:
+            print(f"Trying to read from page {start_page} onwards...")
+            all_data = bytearray()
+            
+            for block_addr in range(start_page, 16):
+                try:
+                    block_data = self.reader.MFRC522_Read(block_addr)
+                    if block_data and len(block_data) == 16:
+                        all_data.extend(block_data)
+                        print(f"Block {block_addr}: {block_data[:8]}...")  # Debug output
+                        
+                        # Check for NDEF TLV structure in this block
+                        for i, byte in enumerate(block_data):
+                            if byte == 0x03:  # NDEF TLV tag
+                                print(f"  Found NDEF TLV tag at block {block_addr}, position {i}")
+                            elif byte == 0xD1:  # NDEF text record header
+                                print(f"  Found NDEF text record header at block {block_addr}, position {i}")
+                            elif byte == 0x02:  # Status byte for UTF-8 text
+                                print(f"  Found status byte 0x02 at block {block_addr}, position {i}")
+                    else:
+                        print(f"Block {block_addr}: No data or invalid length")
+                        if block_data:
+                            print(f"  Block data length: {len(block_data)}")
+                        break
+                except Exception as e:
+                    print(f"Error reading block {block_addr}: {e}")
                     break
-            except Exception as e:
-                print(f"Error reading block {block_addr}: {e}")
-                break
+            
+            print(f"Total data read from page {start_page}: {len(all_data)} bytes")
+            if all_data:
+                print(f"Raw data (first 32 bytes): {all_data[:32]}")
+                print(f"Raw data (hex): {' '.join(f'{b:02X}' for b in all_data[:32])}")
+                
+                # Try to parse this data
+                records = self.parse_ndef_data(all_data)
+                if records:
+                    print(f"Found {len(records)} records starting from page {start_page}")
+                    return records
+            else:
+                print(f"No data read from page {start_page}")
         
-        print(f"Total data read: {len(all_data)} bytes")
-        if all_data:
-            print(f"Raw data (first 32 bytes): {all_data[:32]}")
-            print(f"Raw data (hex): {' '.join(f'{b:02X}' for b in all_data[:32])}")
-        else:
-            print("No data read from tag")
-            return []
-        
-        # Parse NDEF data
-        return self.parse_ndef_data(all_data)
+        print("No NDEF records found in any starting page")
+        return []
     
     def parse_ndef_data(self, data: bytes) -> List[NDEFRecord]:
         """Parse NDEF data and extract records"""
@@ -453,8 +465,13 @@ class NDEFReader:
         # Select the tag
         status = self.reader.MFRC522_SelectTag(uid)
         if status != self.reader.MI_OK:
-            print("Failed to select tag")
-            return False
+            print("Failed to select tag for writing, trying alternative approach...")
+            # Try to re-select the tag
+            time.sleep(0.1)
+            status = self.reader.MFRC522_SelectTag(uid)
+            if status != self.reader.MI_OK:
+                print("Still failed to select tag for writing")
+                return False
         
         # Create NDEF message
         message = NDEFMessage(records)
@@ -471,34 +488,41 @@ class NDEFReader:
         while len(tlv_data) % 16 != 0:
             tlv_data.append(0)
         
-        # Write to blocks 4-15
-        try:
-            block_addr = 4
-            for i in range(0, len(tlv_data), 16):
-                if block_addr >= 16:  # Don't write beyond block 15
-                    break
+        # Try writing to different starting pages
+        for start_page in [4, 5, 6]:
+            print(f"Trying to write to page {start_page} onwards...")
+            try:
+                block_addr = start_page
+                for i in range(0, len(tlv_data), 16):
+                    if block_addr >= 16:  # Don't write beyond block 15
+                        break
+                    
+                    block_data = tlv_data[i:i+16]
+                    if len(block_data) < 16:
+                        block_data.extend([0] * (16 - len(block_data)))
+                    
+                    # Write the block - MFRC522_Write doesn't return a status, so we need to handle errors differently
+                    try:
+                        # Convert to list for MFRC522_Write
+                        block_list = list(block_data)
+                        self.reader.MFRC522_Write(block_addr, block_list)
+                        print(f"Wrote block {block_addr}: {block_data[:8]}...")
+                    except Exception as e:
+                        print(f"Failed to write block {block_addr}: {e}")
+                        break
+                    
+                    block_addr += 1
                 
-                block_data = tlv_data[i:i+16]
-                if len(block_data) < 16:
-                    block_data.extend([0] * (16 - len(block_data)))
+                # If we get here, writing was successful
+                print(f"Successfully wrote NDEF data starting from page {start_page}")
+                return True
                 
-                # Write the block - MFRC522_Write doesn't return a status, so we need to handle errors differently
-                try:
-                    # Convert to list for MFRC522_Write
-                    block_list = list(block_data)
-                    self.reader.MFRC522_Write(block_addr, block_list)
-                    print(f"Wrote block {block_addr}: {block_data[:8]}...")
-                except Exception as e:
-                    print(f"Failed to write block {block_addr}: {e}")
-                    return False
-                
-                block_addr += 1
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error writing: {e}")
-            return False
+            except Exception as e:
+                print(f"Error writing to page {start_page}: {e}")
+                continue
+        
+        print("Failed to write to any starting page")
+        return False
     
     def write_text_record(self, uid: bytes, text: str, language: str = "en") -> bool:
         """Write a text NDEF record to the tag"""
