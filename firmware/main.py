@@ -108,7 +108,7 @@ def main():
 
     last_id = None
     tries = 0
-
+    print("Starting main loop")
     try:
         while True:
             id, text = reader.read()
