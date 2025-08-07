@@ -6,13 +6,13 @@ import time
 import sys
 import argparse
 
-def read_ultralight_tag(reader):
-    """Read data from an ultralight tag"""
-    print("Waiting for ultralight tag to read...")
+def read_ntag215_tag(reader):
+    """Read data from an NTAG215 tag"""
+    print("Waiting for NTAG215 tag to read...")
     
     # Wait for card detection (single attempt)
     while True:
-        (status, TagType) = reader.MFRC522_Request(reader.PICC_REQIDL)
+        (status, back_bits) = reader.request(reader.PICC_REQIDL)
         if status == reader.MI_OK:
             print("Card detected!")
             break
@@ -20,7 +20,7 @@ def read_ultralight_tag(reader):
         time.sleep(0.1)
     
     # Get UID
-    (status, uid) = reader.MFRC522_Anticoll()
+    (status, uid) = reader.anticoll()
     if status != reader.MI_OK:
         print("Failed to get UID")
         return None, None
@@ -28,32 +28,11 @@ def read_ultralight_tag(reader):
     print(f"UID: {uid}")
     
     # Select the tag
-    reader.MFRC522_SelectTag(uid)
+    reader.select_tag(uid)
     
-    # Read data from ultralight pages (starting from page 4 to avoid reserved pages 0-3)
-    data_bytes = []
-    buffer_size = 4  # 4 bytes per page for ultralight tags
+    # Read data from NTAG215 pages (starting from page 4 to avoid reserved pages 0-3)
+    data_bytes = reader.read_ntag215_data(start_page=4, end_page=35)
     
-    # Read up to 32 pages (pages 4-35) - user data area
-    for page_addr in range(4, 36):  # Start reading from page 4
-        # Use the standard read command but handle 4-byte response for ultralight
-        recvData = []
-        recvData.append(reader.PICC_READ)
-        recvData.append(page_addr)
-        pOut = reader.CalulateCRC(recvData)
-        recvData.append(pOut[0])
-        recvData.append(pOut[1])
-        (status, backData, backLen) = reader.MFRC522_ToCard(reader.PCD_TRANSCEIVE, recvData)
-        
-        if status == reader.MI_OK and len(backData) >= buffer_size:
-            # For ultralight tags, we get exactly 4 bytes per page
-            page_data = backData[:buffer_size]  # Take exactly 4 bytes
-            data_bytes.extend(page_data)
-        else:
-            # If we can't read a page, assume we've reached the end
-            break
-    
-    # Convert bytes to text
     if data_bytes:
         # Remove trailing zeros
         while data_bytes and data_bytes[-1] == 0:
@@ -68,43 +47,30 @@ def read_ultralight_tag(reader):
     else:
         return uid, ""
 
-def clear_ultralight_tag(reader, start_page=4, end_page=35):
-    """Clear all user data pages on an ultralight tag by writing zeros"""
+def clear_ntag215_tag(reader, start_page=4, end_page=35):
+    """Clear all user data pages on an NTAG215 tag by writing zeros"""
     print("Clearing card data...")
     
-    # Clear all user data pages (4-35) with zeros
-    pages_cleared = 0
-    for page_addr in range(start_page, end_page + 1):
-        try:
-            # Create a 4-byte zero buffer
-            zero_data = [0x00, 0x00, 0x00, 0x00]
-            
-            # Write zeros to the page
-            success = reader.MFRC522_WriteUltralight(page_addr, zero_data)
-            if success:
-                # Small delay to ensure write completes
-                time.sleep(0.1)
-                pages_cleared += 1
-            else:
-                print(f"Warning: Failed to clear page {page_addr}")
-            
-        except Exception as e:
-            print(f"Warning: Failed to clear page {page_addr}: {e}")
-            # Continue with next page
+    # Use the new clear method
+    success = reader.clear_ntag215_data(start_page, end_page)
+    if success:
+        print(f"Cleared pages {start_page} to {end_page}")
+    else:
+        print("Warning: Some pages may not have been cleared")
     
-    print(f"Cleared {pages_cleared} pages ({start_page} to {end_page})")
+    return success
 
-def write_ultralight_tag(reader, text):
-    """Write data to an ultralight tag"""
+def write_ntag215_tag(reader, text):
+    """Write data to an NTAG215 tag"""
     if not text:
         print("No data provided, exiting...")
         return False
     
-    print("Now place your ultralight tag to write")
+    print("Now place your NTAG215 tag to write")
     
     # Wait for card detection
     while True:
-        (status, TagType) = reader.MFRC522_Request(reader.PICC_REQIDL)
+        (status, back_bits) = reader.request(reader.PICC_REQIDL)
         if status == reader.MI_OK:
             print("Card detected!")
             break
@@ -112,7 +78,7 @@ def write_ultralight_tag(reader, text):
         time.sleep(0.1)
     
     # Get UID
-    (status, uid) = reader.MFRC522_Anticoll()
+    (status, uid) = reader.anticoll()
     if status != reader.MI_OK:
         print("Failed to get UID")
         return False
@@ -120,63 +86,33 @@ def write_ultralight_tag(reader, text):
     print(f"UID: {uid}")
     
     # Select the tag
-    reader.MFRC522_SelectTag(uid)
+    reader.select_tag(uid)
     
     # Clear the card before writing
-    clear_ultralight_tag(reader)
+    clear_ntag215_tag(reader)
     
-    # Convert text to bytes and pad to 4-byte chunks
-    text_bytes = text.encode('ascii')
-    buffer_size = 4  # 4 bytes per page for ultralight tags
+    # Convert text to bytes
+    text_bytes = list(text.encode('ascii'))
     
-    # Check if data is too large for ultralight tag (max 36 pages, starting from page 4)
-    max_pages = 32  # Pages 4-35 are available for user data
-    required_pages = (len(text_bytes) + buffer_size - 1) // buffer_size  # Round up division
-    
-    if required_pages > max_pages:
-        print(f"Data too large! Need {required_pages} pages but only {max_pages} available.")
-        print(f"Maximum data size: {max_pages * buffer_size} bytes")
+    # Check if data is too large for NTAG215 tag (max 32 pages for user data)
+    max_bytes = 32 * 4  # 32 pages * 4 bytes per page
+    if len(text_bytes) > max_bytes:
+        print(f"Data too large! Need {len(text_bytes)} bytes but only {max_bytes} available.")
         return False
     
-    # Write data to ultralight pages (starting from page 4 to avoid reserved pages 0-3)
-    page_addr = 4  # Start writing from page 4
-    bytes_written = 0
-    pages_written = 0
+    # Write data to NTAG215 pages (starting from page 4 to avoid reserved pages 0-3)
+    success = reader.write_ntag215_data(text_bytes, start_page=4)
     
-    for i in range(0, len(text_bytes), buffer_size):
-        # Get exactly 4 bytes for this page
-        page_data = list(text_bytes[i:i+buffer_size])
-        
-        # Pad with zeros if less than 4 bytes to ensure exact buffer_size
-        while len(page_data) < buffer_size:
-            page_data.append(0)
-        
-        # Ensure we only write exactly 4 bytes
-        page_data = page_data[:buffer_size]
-        
-        # Write to ultralight page (starting from page 4)
-        success = reader.MFRC522_WriteUltralight(page_addr, page_data)
-        if not success:
-            print(f"Failed to write page {page_addr}")
-            return False
-        
-        # Small delay to ensure write completes
-        time.sleep(0.1)
-        
-        page_addr += 1
-        bytes_written += len(page_data)
-        pages_written += 1
-        
-        # Stop if we've written all the data
-        if i + buffer_size >= len(text_bytes):
-            break
-    
-    print(f"Written {bytes_written} bytes to {pages_written} pages on ultralight tag")
-    print("Ultralight tag write completed!")
-    return True
+    if success:
+        print(f"Written {len(text_bytes)} bytes to NTAG215 tag")
+        print("NTAG215 tag write completed!")
+        return True
+    else:
+        print("Failed to write to NTAG215 tag")
+        return False
 
 def main():
-    parser = argparse.ArgumentParser(description='Ultralight NFC tag reader/writer')
+    parser = argparse.ArgumentParser(description='NTAG215 NFC tag reader/writer')
     parser.add_argument('-w', '--write', type=str, help='Data to write to the tag')
     args = parser.parse_args()
     
@@ -186,7 +122,7 @@ def main():
         if args.write:
             # Write mode - write once
             print(f"Write mode: '{args.write}'")
-            success = write_ultralight_tag(reader, args.write)
+            success = write_ntag215_tag(reader, args.write)
             if success:
                 print("Write operation completed successfully!")
             else:
@@ -194,7 +130,7 @@ def main():
         else:
             # Read mode - read once
             print("Read mode: Place a tag to read")
-            uid, text = read_ultralight_tag(reader)
+            uid, text = read_ntag215_tag(reader)
             if uid:
                 print(f"\nTag UID: {uid}")
                 if text:
@@ -209,7 +145,7 @@ def main():
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        GPIO.cleanup()
+        reader.close()
 
 if __name__ == "__main__":
     main()
