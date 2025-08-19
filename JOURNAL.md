@@ -55,3 +55,7 @@ I created some code and scripts that setup the nviroment based on the various gu
 # Future Work
 
 When the cubes come in, I will have to paint each one and then cut, sand, and glue them together. After I plan on applying a finish to make the box look good. I think this will take a few days to up to a week.
+
+# August 4:
+
+After all of my parts finally came in I finished creating the wooden sides and decided to 3D print the top part as I had run out of wooden cubes.

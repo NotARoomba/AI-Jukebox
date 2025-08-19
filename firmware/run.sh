@@ -1,4 +1,5 @@
-cd suno-api 
+cd suno-api &
+npm i &
 npm run dev &
 echo "Suno API is running on http://localhost:3000"
 
