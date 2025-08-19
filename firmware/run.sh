@@ -1,11 +1,14 @@
-cd suno-api &
-npm i &
+cd suno-api &&
+npm i &&
 npm run dev &
-echo "Suno API is running on http://localhost:3000"
 
 cd ../
 
-source env/bin/activate
+cd jukebox-firmware &&
+source env/bin/activate &&
 python main.py &
-echo "Jukebox firmware is running"
 
+cd ../
+
+echo "Suno API is running on http://localhost:3000"
+echo "Jukebox firmware is running"
