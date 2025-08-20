@@ -2,7 +2,6 @@ cd suno-api &&
 npm i &&
 npm run dev &
 
-cd ../ &&
 source env/bin/activate &&
 python main.py &
 cd ../ &&
