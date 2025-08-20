@@ -1,0 +1,26 @@
+[Unit]
+Description=Jukebox Firmware Service
+After=network.target sound.target
+Wants=network.target sound.target
+
+[Service]
+Type=forking
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/Jukebox/firmware
+ExecStart=/bin/bash /home/pi/Jukebox/firmware/run-service.sh
+ExecStop=/bin/bash -c 'pkill -f "python.*main.py" && pkill -f "npm.*run.*dev"'
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PATH=/home/pi/Jukebox/firmware/env/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/pi/Jukebox/firmware
+
+# Audio and GPIO permissions
+SupplementaryGroups=audio gpio
+
+[Install]
+WantedBy=multi-user.target

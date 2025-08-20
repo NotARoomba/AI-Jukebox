@@ -1,0 +1,5 @@
+requests>=2.28.0
+python-vlc>=3.0.18122
+mfrc522>=0.0.1
+RPi.GPIO>=0.7.1
+spidev>=3.6
