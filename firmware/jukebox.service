@@ -5,10 +5,10 @@ Wants=network.target sound.target
 
 [Service]
 Type=forking
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/Jukebox/firmware
-ExecStart=/bin/bash /home/pi/Jukebox/firmware/run-service.sh
+User=notaroomba
+Group=notaroomba
+WorkingDirectory=/home/notaroomba/Jukebox/firmware
+ExecStart=/bin/bash /home/notaroomba/Jukebox/firmware/run-service.sh
 ExecStop=/bin/bash -c 'pkill -f "python.*main.py" && pkill -f "npm.*run.*dev"'
 Restart=always
 RestartSec=10
@@ -16,8 +16,8 @@ StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PATH=/home/pi/Jukebox/firmware/env/bin:/usr/local/bin:/usr/bin:/bin
-Environment=PYTHONPATH=/home/pi/Jukebox/firmware
+Environment=PATH=/home/notaroomba/Jukebox/firmware/env/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/notaroomba/Jukebox/firmware
 
 # Audio and GPIO permissions
 SupplementaryGroups=audio gpio

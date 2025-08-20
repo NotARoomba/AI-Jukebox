@@ -10,10 +10,10 @@ SERVICE_NAME="jukebox"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 LOG_DIR="/var/log/jukebox"
 PID_DIR="/var/run/jukebox"
-SERVICE_DIR="/home/pi/Jukebox/firmware"
+SERVICE_DIR="/home/notaroomba/Jukebox/firmware"
 REPO_URL="https://github.com/NotARoomba/AI-Jukebox.git"
 REPO_DIR="/tmp/AI-Jukebox-update"
-BACKUP_DIR="/home/pi/Jukebox/backup-$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="/home/notaroomba/Jukebox/backup-$(date +%Y%m%d-%H%M%S)"
 
 # Colors for output
 RED='\033[0;31m'
@@ -161,7 +161,7 @@ install_service() {
     # Get the current user
     CURRENT_USER=$(logname || who am i | awk '{print $1}' | head -n1)
     if [ -z "$CURRENT_USER" ]; then
-        CURRENT_USER="pi"
+        CURRENT_USER="notaroomba"
     fi
     
     print_status "Installing Jukebox service for user: $CURRENT_USER"
@@ -797,7 +797,7 @@ update_firmware() {
     chmod +x "$SERVICE_DIR"/*.sh 2>/dev/null || true
     
     # Update permissions
-    chown -R pi:pi "$SERVICE_DIR"
+    chown -R notaroomba:notaroomba "$SERVICE_DIR"
     
     print_status "Firmware files updated successfully"
     
@@ -859,7 +859,7 @@ setup_auto_update() {
     
     # Get update frequency from command line
     UPDATE_FREQUENCY="${2:-daily}"
-    CRON_USER="pi"
+    CRON_USER="notaroomba"
     
     # Validate frequency
     case $UPDATE_FREQUENCY in
@@ -915,7 +915,7 @@ $LOG_DIR/auto-update.log {
     compress
     delaycompress
     notifempty
-    create 644 pi pi
+    create 644 notaroomba notaroomba
     postrotate
         systemctl reload rsyslog >/dev/null 2>&1 || true
     endscript
